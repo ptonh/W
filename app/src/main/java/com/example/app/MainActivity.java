@@ -4,25 +4,34 @@ import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.media.AudioAttributes;
 import android.media.MediaScannerConnection;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.NotificationCompat;
 import android.support.v4.content.ContextCompat;
 import android.text.InputType;
 import android.util.Base64;
 import android.util.Rational;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
@@ -52,7 +61,7 @@ import java.util.Locale;
 /**
  * 聊天网页的外壳。
  * - 聊天网址可在软件里设置（首次打开弹窗；之后长按桌面图标选"设置地址"，或页面打不开时点"修改地址"）。
- * - 视频嵌在聊天页里（iframe），所以软件只负责：权限、选文件、下载、全屏、外链、画中画。
+ * - 视频嵌在聊天页里（iframe），所以软件负责：权限、选文件、下载、全屏、外链、系统通知、来电铃声、画中画。
  */
 public class MainActivity extends Activity {
 
@@ -68,12 +77,36 @@ public class MainActivity extends Activity {
     // 视频域名默认值（用户不填写时使用）
     private static final String DEFAULT_VIDEO_HOST = "";
 
+    // 通知渠道：消息（系统默认通知音）、来电（系统来电铃声，持续响）
+    private static final String CH_MSG = "chat_msg";
+    private static final String CH_CALL = "chat_call";
+    private static final int CALL_NID = 1001;
+    private static final long CALL_RING_MS = 60 * 1000L; // 与聊天脚本的 RING_MS 一致
+
     // 记录 <a download="文件名"> 的文件名，下载时用
     private static final String HOOK_JS =
             "(function(){if(window.__hk)return;window.__hk=1;"
             + "document.addEventListener('click',function(e){var a=e.target;"
             + "while(a&&a.tagName!=='A')a=a.parentNode;"
             + "if(a&&a.hasAttribute('download'))window.__dlName=a.getAttribute('download')||'';},true);})();";
+
+    // 把网页的 Notification / showNotification 转给软件；监听视频页的 connected / ended / pip-fail
+    private static final String NOTIFY_JS =
+            "(function(){if(window.__nt)return;window.__nt=1;"
+            + "function send(t,o){o=o||{};try{HostBridge.notify(String(t||''),String(o.body||''),String(o.tag||''));}catch(e){}}"
+            + "function N(t,o){send(t,o);this.close=function(){};this.onclick=null;}"
+            + "N.permission='granted';"
+            + "N.requestPermission=function(cb){if(cb)cb('granted');return Promise.resolve('granted');};"
+            + "try{Object.defineProperty(window,'Notification',{value:N,configurable:true,writable:true});}catch(e){window.Notification=N;}"
+            + "try{if(window.ServiceWorkerRegistration){ServiceWorkerRegistration.prototype.showNotification=function(t,o){send(t,o);return Promise.resolve();};}}catch(e){}"
+            + "window.__pipPrep=function(){try{var L=document.getElementById('vcL');if(!L)return;L.classList.remove('pip');"
+            + "if(L.classList.contains('mini')){if(window.vcMini)vcMini(false);else L.classList.remove('mini','bubble');}}catch(e){}};"
+            + "window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='vcall')return;"
+            + "var F=document.getElementById('vcF');if(!F||e.source!==F.contentWindow)return;"
+            + "if(d.type==='connected'){try{HostBridge.call(true);}catch(x){}}"
+            + "else if(d.type==='ended'){try{HostBridge.call(false);}catch(x){}}"
+            + "else if(d.type==='pip-fail'){e.stopImmediatePropagation();try{HostBridge.pip();}catch(x){}}"
+            + "},true);})();";
 
     private FrameLayout root;
     private WebView webView;
@@ -85,6 +118,9 @@ public class MainActivity extends Activity {
     private String videoHost = "";
 
     private AlertDialog settingsDialog;
+
+    private volatile boolean inCall = false;
+    private volatile boolean resumed = false;
 
     // 等待用户授权的摄像头/麦克风请求
     private PermissionRequest pendingMedia;
@@ -110,6 +146,9 @@ public class MainActivity extends Activity {
         videoHost = prefs.getString("video_host", DEFAULT_VIDEO_HOST);
         chatHost = hostOf(chatUrl);
 
+        createChannels(); // 安卓 13 会在这时弹出"允许通知"
+        applyCallFlags(getIntent());
+
         root = new FrameLayout(this);
         webView = new WebView(this);
         root.addView(webView, new FrameLayout.LayoutParams(
@@ -130,14 +169,23 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        applyCallFlags(intent);
         if (intent != null && ACTION_SETTINGS.equals(intent.getAction())) {
             showSettings();
         }
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        resumed = true;
+        cancelCallNotification(); // 回到软件，来电界面已在网页里，停掉通知铃声
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
+        resumed = false;
         if (Build.VERSION.SDK_INT >= 21) {
             android.webkit.CookieManager.getInstance().flush();
         }
@@ -165,11 +213,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 用户按 Home 键或切换应用时，如果正在全屏看视频，则进入画中画
+    // 按 Home 键或切换应用时：正在全屏看视频 / 正在通话，则进入画中画
     @Override
     public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (Build.VERSION.SDK_INT >= 26 && customView != null && !isInPictureInPictureMode()) {
+        if (Build.VERSION.SDK_INT >= 26 && (customView != null || inCall)
+                && !isInPictureInPictureMode()) {
             enterPip();
         }
     }
@@ -178,27 +227,113 @@ public class MainActivity extends Activity {
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
         if (isInPictureInPictureMode) {
-            // 进入画中画时隐藏系统 UI
             setImmersiveMode(true);
-        } else {
-            // 退出画中画
-            if (customView == null) {
-                setImmersiveMode(false);
-            }
+        } else if (customView == null) {
+            setImmersiveMode(false);
         }
     }
 
-    /** 进入画中画模式 */
+    /** 进入画中画：通话时是竖屏小窗（9:16），全屏播放视频时是横屏（16:9） */
     @TargetApi(26)
     private void enterPip() {
         try {
-            Rational aspectRatio = new Rational(16, 9);
+            if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+                toast("这台手机不支持画中画");
+                return;
+            }
+            // 通话时先让聊天页把通话层恢复成全屏，小窗里才能看到视频
+            runJs("window.__pipPrep&&window.__pipPrep()");
+            Rational ratio = (inCall && customView == null) ? new Rational(9, 16) : new Rational(16, 9);
             PictureInPictureParams params = new PictureInPictureParams.Builder()
-                    .setAspectRatio(aspectRatio)
+                    .setAspectRatio(ratio)
                     .build();
             enterPictureInPictureMode(params);
         } catch (Exception e) {
             // 部分机型可能不支持，忽略即可
+        }
+    }
+
+    // ---------------------------------------------------------------- 系统通知
+
+    private void createChannels() {
+        if (Build.VERSION.SDK_INT < 26) return;
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        nm.createNotificationChannel(new NotificationChannel(CH_MSG, "聊天消息",
+                NotificationManager.IMPORTANCE_HIGH));
+
+        NotificationChannel call = new NotificationChannel(CH_CALL, "来电",
+                NotificationManager.IMPORTANCE_HIGH);
+        AudioAttributes aa = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+        call.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), aa);
+        call.enableVibration(true);
+        call.setVibrationPattern(new long[]{0, 600, 400, 600, 400, 600});
+        call.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        nm.createNotificationChannel(call);
+    }
+
+    private void showSysNotification(String title, String body, String tag) {
+        if (resumed) return; // 软件在前台时不弹
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        createChannels();
+
+        boolean isCall = "vcall".equals(tag);
+        Intent it = new Intent(this, MainActivity.class);
+        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (isCall) it.putExtra("call", true);
+        PendingIntent pi = PendingIntent.getActivity(this, isCall ? 1 : 0, it,
+                PendingIntent.FLAG_UPDATE_CURRENT);
+
+        if (isCall) {
+            NotificationCompat.Builder b = new NotificationCompat.Builder(this, CH_CALL)
+                    .setSmallIcon(getApplicationInfo().icon)
+                    .setContentTitle(title.length() > 0 ? title : "来电")
+                    .setContentText(body)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setOngoing(true)
+                    .setAutoCancel(true)
+                    .setContentIntent(pi)
+                    .setFullScreenIntent(pi, true)
+                    .setTimeoutAfter(CALL_RING_MS);
+            if (Build.VERSION.SDK_INT < 26) {
+                b.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                        android.media.AudioManager.STREAM_RING);
+                b.setVibrate(new long[]{0, 600, 400, 600, 400, 600});
+            }
+            Notification n = b.build();
+            n.flags |= Notification.FLAG_INSISTENT; // 铃声重复响，直到接听 / 取消 / 超时
+            nm.notify(CALL_NID, n);
+            return;
+        }
+
+        Notification n = new NotificationCompat.Builder(this, CH_MSG)
+                .setSmallIcon(getApplicationInfo().icon)
+                .setContentTitle(title.length() > 0 ? title : "新消息")
+                .setContentText(body)
+                .setAutoCancel(true)
+                .setDefaults(Notification.DEFAULT_ALL)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pi)
+                .build();
+        nm.notify(tag.length() > 0 ? tag.hashCode() : (int) System.currentTimeMillis(), n);
+    }
+
+    private void cancelCallNotification() {
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.cancel(CALL_NID);
+    }
+
+    /** 点来电通知进来时，锁屏上也能亮屏显示 */
+    private void applyCallFlags(Intent it) {
+        if (it != null && it.getBooleanExtra("call", false)) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         }
     }
 
@@ -446,12 +581,14 @@ public class MainActivity extends Activity {
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
             webView.setKeepScreenOn(false);
+            inCall = false;
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
             runJs(HOOK_JS);
+            runJs(NOTIFY_JS);
         }
 
         @TargetApi(23)
@@ -718,6 +855,39 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 toast("保存失败");
             }
+        }
+
+        // 视频页发来 connected / ended：记录"是否正在通话"，用于按 Home 键进画中画
+        @JavascriptInterface
+        public void call(boolean on) {
+            inCall = on;
+        }
+
+        // 网页的通知转成系统通知；tag 为 vcall 时是来电，用来电铃声
+        @JavascriptInterface
+        public void notify(final String title, final String body, final String tag) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    showSysNotification(title == null ? "" : title,
+                            body == null ? "" : body, tag == null ? "" : tag);
+                }
+            });
+        }
+
+        // 视频页自己的画中画按钮（网页的画中画在 WebView 里不能用）→ 改用软件的画中画
+        @JavascriptInterface
+        public void pip() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (Build.VERSION.SDK_INT >= 26) {
+                        if (!isInPictureInPictureMode()) enterPip();
+                    } else {
+                        toast("画中画需要安卓 8.0 及以上");
+                    }
+                }
+            });
         }
 
         @JavascriptInterface
