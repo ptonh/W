@@ -217,6 +217,7 @@ public class MainActivity extends Activity {
     @Override
     public void onUserLeaveHint() {
         super.onUserLeaveHint();
+        toast("[调试]按Home inCall=" + inCall);
         if (Build.VERSION.SDK_INT >= 26 && (customView != null || inCall)
                 && !isInPictureInPictureMode()) {
             enterPip();
@@ -352,6 +353,9 @@ public class MainActivity extends Activity {
         }
 
         webView.addJavascriptInterface(new HostBridge(), "HostBridge");
+        if (Build.VERSION.SDK_INT >= 26) {
+            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); // 进后台后网页不被降级
+        }
 
         webView.setDownloadListener(new DownloadListener() {
             @Override
@@ -861,11 +865,13 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void call(boolean on) {
             inCall = on;
+            toast(on ? "[调试]已收到：通话连通" : "[调试]已收到：通话结束");
         }
 
         // 网页的通知转成系统通知；tag 为 vcall 时是来电，用来电铃声
         @JavascriptInterface
         public void notify(final String title, final String body, final String tag) {
+            toast("[调试]已收到通知请求：" + tag);
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
