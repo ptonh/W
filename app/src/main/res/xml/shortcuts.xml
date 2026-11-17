@@ -8,7 +8,7 @@
         android:shortcutLongLabel="@string/shortcut_settings">
         <intent
             android:action="com.example.app.SETTINGS"
-            android:targetPackage="com.example.app"
+            android:targetPackage="org.myvideo.app"
             android:targetClass="com.example.app.MainActivity" />
     </shortcut>
 </shortcuts>
