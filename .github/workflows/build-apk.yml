@@ -51,13 +51,21 @@ jobs:
     - name: Build with Gradle
       run: |
         echo "========== 开始构建 =========="
-        ./gradlew assembleDebug --stacktrace --info || {
+        ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log
+        BUILD_EXIT=${PIPESTATUS[0]}
+
+        if [ $BUILD_EXIT -ne 0 ]; then
           echo ""
-          echo "========== 构建失败，以下是关键错误 =========="
-          grep -n -E "error:|error\]|cannot find symbol|package .* does not exist|incompatible types|BUILD FAILED|Could not resolve|Too Many Requests" --color=always || true
-          echo "========== 错误结束 =========="
+          echo "==================== 构建失败 - 错误信息开始 ===================="
+          echo ""
+          
+          # 提取真正的错误（去掉大量下载日志）
+          grep -E "error:|error\]|cannot find symbol|package .* does not exist|incompatible types|Could not resolve|Too Many Requests|BUILD FAILED|Execution failed|What went wrong" build.log | head -50
+          
+          echo ""
+          echo "==================== 错误信息结束（可直接复制上面内容） ===================="
           exit 1
-        }
+        fi
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
