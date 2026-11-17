@@ -534,7 +534,7 @@ public class MainActivity extends Activity {
             webView.setVisibility(View.GONE);
             root.addView(v, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            setImmersive(true);
+            setImmersiveMode(true);
         }
 
         @Override
@@ -547,11 +547,11 @@ public class MainActivity extends Activity {
                 customCb.onCustomViewHidden();
                 customCb = null;
             }
-            setImmersive(false);
+            setImmersiveMode(false);
         }
     }
 
-    private void setImmersive(boolean on) {
+    private void setImmersiveMode(boolean on) {
         if (Build.VERSION.SDK_INT >= 19) {
             int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                     | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
