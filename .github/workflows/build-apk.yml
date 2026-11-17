@@ -5,7 +5,7 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
-  workflow_dispatch:   # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -25,7 +25,15 @@ jobs:
       run: chmod +x ./gradlew
 
     - name: Build with Gradle
-      run: ./gradlew assembleDebug --stacktrace
+      run: |
+        echo "========== 开始构建 =========="
+        ./gradlew assembleDebug --stacktrace --info || {
+          echo ""
+          echo "========== 构建失败，以下是关键错误 =========="
+          grep -n -E "error:|error\]|cannot find symbol|package .* does not exist|incompatible types|BUILD FAILED" --color=always || true
+          echo "========== 错误结束 =========="
+          exit 1
+        }
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
