@@ -87,11 +87,14 @@ public class MainActivity extends Activity {
     // 视频域名默认值（用户不填写时使用）
     private static final String DEFAULT_VIDEO_HOST = "";
 
-    // 通知渠道（换了新名字，强制重建，避免被小米改成静音后无法修改）
-    private static final String CH_MSG = "chat_msg_v2";
-    private static final String CH_CALL = "chat_call_v2";
+    // 通知渠道（尽量简单，消息走系统默认声音）
+    private static final String CH_MSG = "chat_msg_v3";
+    private static final String CH_CALL = "chat_call_v3";
     private static final int CALL_NID = 1001;
     private static final long CALL_RING_MS = 60 * 1000L;
+
+    // 未读消息数（用于通知角标数字）
+    private int unreadCount = 0;
 
     // 记录 <a download="文件名"> 的文件名，下载时用
     private static final String HOOK_JS =
@@ -209,6 +212,12 @@ public class MainActivity extends Activity {
         resumed = true;
         addLog("onResume 回到前台");
         cancelCallNotification();
+
+        // 回到软件后清零未读数
+        if (unreadCount > 0) {
+            addLog("清零未读数，原数量=" + unreadCount);
+            unreadCount = 0;
+        }
     }
 
     @Override
@@ -436,34 +445,34 @@ public class MainActivity extends Activity {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
 
-        // 消息渠道
+        // 消息渠道：尽量使用系统默认声音和振动，减少用户需要单独设置
         NotificationChannel msg = new NotificationChannel(CH_MSG, "聊天消息",
                 NotificationManager.IMPORTANCE_HIGH);
         msg.setDescription("新消息通知");
+        msg.setShowBadge(true);                    // 允许显示未读数字
         msg.enableVibration(true);
-        msg.setVibrationPattern(new long[]{0, 300, 200, 300});
+        msg.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        // 使用系统默认通知声音
         msg.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
                 new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build());
-        msg.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        msg.setShowBadge(true);
         nm.createNotificationChannel(msg);
 
-        // 来电渠道
+        // 来电渠道（需要铃声，保留单独渠道）
         NotificationChannel call = new NotificationChannel(CH_CALL, "来电",
                 NotificationManager.IMPORTANCE_HIGH);
         call.setDescription("视频来电");
-        AudioAttributes aa = new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build();
-        call.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), aa);
+        call.setShowBadge(false);
         call.enableVibration(true);
         call.setVibrationPattern(new long[]{0, 600, 400, 600, 400, 600});
         call.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        call.setShowBadge(false);
+        call.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build());
         nm.createNotificationChannel(call);
 
         addLog("已创建通知渠道 CH_MSG=" + CH_MSG + " CH_CALL=" + CH_CALL);
@@ -510,10 +519,10 @@ public class MainActivity extends Activity {
                 NotificationChannel callCh = nm.getNotificationChannel(CH_CALL);
                 addLog("消息渠道 重要性=" + (msgCh == null ? "不存在" : msgCh.getImportance())
                         + " 声音=" + (msgCh != null && msgCh.getSound() != null)
-                        + " 振动=" + (msgCh != null && msgCh.shouldVibrate()));
+                        + " 振动=" + (msgCh != null && msgCh.shouldVibrate())
+                        + " 角标=" + (msgCh != null && msgCh.canShowBadge()));
                 addLog("来电渠道 重要性=" + (callCh == null ? "不存在" : callCh.getImportance())
-                        + " 声音=" + (callCh != null && callCh.getSound() != null)
-                        + " 振动=" + (callCh != null && callCh.shouldVibrate()));
+                        + " 声音=" + (callCh != null && callCh.getSound() != null));
             }
 
             if (Build.VERSION.SDK_INT >= 23) {
@@ -572,19 +581,23 @@ public class MainActivity extends Activity {
             n = b.build();
             n.flags |= Notification.FLAG_INSISTENT;
         } else {
+            // 普通消息：增加未读数
+            unreadCount++;
             n = new NotificationCompat.Builder(this, CH_MSG)
                     .setSmallIcon(android.R.drawable.stat_notify_chat)
                     .setContentTitle(title.length() > 0 ? title : "新消息")
                     .setContentText(body)
                     .setAutoCancel(true)
-                    .setDefaults(Notification.DEFAULT_ALL)
+                    .setDefaults(Notification.DEFAULT_ALL)   // 尽量用系统默认声音+振动
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setContentIntent(pi)
                     .setOnlyAlertOnce(false)
+                    .setNumber(unreadCount)                  // 未读数字
+                    .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
                     .build();
         }
         nm.notify(id, n);
-        addLog("→ 已发送系统通知 id=" + id + " 渠道=" + chId);
+        addLog("→ 已发送系统通知 id=" + id + " 渠道=" + chId + (isCall ? "" : " 未读=" + unreadCount));
     }
 
     private void cancelCallNotification() {
