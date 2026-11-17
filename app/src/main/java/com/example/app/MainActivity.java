@@ -4,6 +4,7 @@ import android.Manifest;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PictureInPictureParams;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -19,6 +20,7 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.text.InputType;
 import android.util.Base64;
+import android.util.Rational;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.DownloadListener;
@@ -50,7 +52,7 @@ import java.util.Locale;
 /**
  * 聊天网页的外壳。
  * - 聊天网址可在软件里设置（首次打开弹窗；之后长按桌面图标选"设置地址"，或页面打不开时点"修改地址"）。
- * - 视频嵌在聊天页里（iframe），所以软件只负责：权限、选文件、下载、全屏、外链。
+ * - 视频嵌在聊天页里（iframe），所以软件只负责：权限、选文件、下载、全屏、外链、画中画。
  */
 public class MainActivity extends Activity {
 
@@ -62,6 +64,9 @@ public class MainActivity extends Activity {
 
     // 下载时网页把文件转成 base64 文本传给软件，限制大小防止内存溢出（约 50MB 文件）
     private static final int MAX_DATA_CHARS = 70 * 1024 * 1024;
+
+    // 视频域名默认值（用户不填写时使用）
+    private static final String DEFAULT_VIDEO_HOST = "";
 
     // 记录 <a download="文件名"> 的文件名，下载时用
     private static final String HOOK_JS =
@@ -102,7 +107,7 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
         chatUrl = prefs.getString("chat_url", "");
-        videoHost = prefs.getString("video_host", "");
+        videoHost = prefs.getString("video_host", DEFAULT_VIDEO_HOST);
         chatHost = hostOf(chatUrl);
 
         root = new FrameLayout(this);
@@ -157,6 +162,43 @@ public class MainActivity extends Activity {
         if (webView != null) {
             root.removeView(webView);
             webView.destroy();
+        }
+    }
+
+    // 用户按 Home 键或切换应用时，如果正在全屏看视频，则进入画中画
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (Build.VERSION.SDK_INT >= 26 && customView != null && !isInPictureInPictureMode()) {
+            enterPip();
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode);
+        if (isInPictureInPictureMode) {
+            // 进入画中画时隐藏系统 UI
+            setImmersiveMode(true);
+        } else {
+            // 退出画中画
+            if (customView == null) {
+                setImmersiveMode(false);
+            }
+        }
+    }
+
+    /** 进入画中画模式 */
+    @TargetApi(26)
+    private void enterPip() {
+        try {
+            Rational aspectRatio = new Rational(16, 9);
+            PictureInPictureParams params = new PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+                    .build();
+            enterPictureInPictureMode(params);
+        } catch (Exception e) {
+            // 部分机型可能不支持，忽略即可
         }
     }
 
@@ -250,7 +292,7 @@ public class MainActivity extends Activity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+                Toast.makeText((MainActivity.this, msg, Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -281,10 +323,10 @@ public class MainActivity extends Activity {
         box.addView(e1);
 
         TextView t2 = new TextView(this);
-        t2.setText("\n视频页域名或网址（视频和聊天不在同一个域名时必填，用于允许摄像头和麦克风）");
+        t2.setText("\n视频页域名或网址（不填则使用默认，视频和聊天不在同一个域名时建议填写）");
         box.addView(t2);
         final EditText e2 = new EditText(this);
-        e2.setHint("video.example.com");
+        e2.setHint("video.example.com（可留空）");
         e2.setSingleLine(true);
         e2.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         e2.setText(videoHost);
@@ -310,7 +352,11 @@ public class MainActivity extends Activity {
                             toast("请输入正确的聊天网址");
                             return;
                         }
+                        // 有输入就用输入的，没输入就用默认值
                         String vh = hostOf(normalizeUrl(e2.getText()));
+                        if (vh.length() == 0) {
+                            vh = DEFAULT_VIDEO_HOST;
+                        }
                         chatUrl = u;
                         chatHost = hostOf(u);
                         videoHost = vh;
