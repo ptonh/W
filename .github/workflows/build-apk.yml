@@ -56,14 +56,25 @@ jobs:
 
         if [ $BUILD_EXIT -ne 0 ]; then
           echo ""
-          echo "==================== 构建失败 - 错误信息开始 ===================="
+          echo "==================== 构建失败 ===================="
           echo ""
-          
-          # 提取真正的错误（去掉大量下载日志）
-          grep -E "error:|error\]|cannot find symbol|package .* does not exist|incompatible types|Could not resolve|Too Many Requests|BUILD FAILED|Execution failed|What went wrong" build.log | head -50
-          
-          echo ""
-          echo "==================== 错误信息结束（可直接复制上面内容） ===================="
+
+          # 官方红色错误注解（会显示在 Actions 顶部）
+          echo "::error::构建失败，请查看下方提取的错误信息"
+
+          # 提取关键错误
+          ERRORS=$(grep -E "error:|error\]|cannot find symbol|package .* does not exist|incompatible types|Could not resolve|Too Many Requests|BUILD FAILED|Execution failed|What went wrong" build.log | head -50)
+
+          if [ -n "$ERRORS" ]; then
+            echo ""
+            # ANSI 红色显示错误内容
+            echo -e "\033[31m$ERRORS\033[0m"
+            echo ""
+          else
+            echo -e "\033[31m未提取到具体错误，请查看完整日志\033[0m"
+          fi
+
+          echo "==================== 错误结束（可直接复制上面红色内容） ===================="
           exit 1
         fi
 
