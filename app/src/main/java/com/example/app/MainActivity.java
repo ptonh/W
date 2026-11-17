@@ -113,6 +113,7 @@ public class MainActivity extends Activity {
             + "lg('注入完成 url='+location.href+' 有serviceWorker='+('serviceWorker' in navigator)+' 权限='+Notification.permission);\n"
             + "function wrap(n){try{var f=window[n];if(typeof f!=='function'||f.__w)return;var w=function(){var a=[];try{a.push('sysOk='+sysOk(),'hidden='+document.hidden,'focus='+document.hasFocus(),'ntf='+lsGet('ntf'));}catch(x){a.push('读状态失败 '+x);}lg(n+' 被调用 '+a.join(' '));return f.apply(this,arguments);};w.__w=1;window[n]=w;}catch(e){lg('包装失败 '+n+' '+e);}}\n"
             + "['sysNotice','backlogNotice','sysShow','newMsgNotice','vcShowIn'].forEach(wrap);\n"
+            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{if(!document.hidden){var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){send(roomTitle(r),{body:(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80)+(list.length>1?'（共 '+list.length+' 条新消息）':''),tag:'room-'+r});}}}catch(x){lg('前台通知失败 '+x);}return rv;};nw.__f=1;nw.__w=1;window.newMsgNotice=nw;}}catch(e){lg('包装newMsgNotice失败 '+e);}\n"
             + "document.addEventListener('visibilitychange',function(){lg('visibilitychange hidden='+document.hidden);});\n"
             + "window.addEventListener('focus',function(){lg('页面获得焦点');});\n"
             + "window.addEventListener('blur',function(){lg('页面失去焦点');});\n"
@@ -123,7 +124,6 @@ public class MainActivity extends Activity {
             + "window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='vcall')return;var F=document.getElementById('vcF');if(!F||e.source!==F.contentWindow)return;lg('视频页消息 type='+d.type+(d.reason?' reason='+d.reason:''));if(d.type==='pip-fail'){e.stopImmediatePropagation();try{HostBridge.pip();}catch(x){}}},true);\n"
             + "var last=null;setInterval(function(){var on=false;try{on=!!(document.getElementById('vcF')&&vc&&vc.id&&vc.st==='act');}catch(x){}if(on!==last){last=on;try{HostBridge.call(on);}catch(x){}}},1000);\n"
             + "})();\n";
-
     private FrameLayout root;
     private WebView webView;
     private AppChrome chrome;
@@ -142,6 +142,8 @@ public class MainActivity extends Activity {
     private static final List<String> LOGS = new ArrayList<String>();
     private static final SimpleDateFormat LOG_FMT = new SimpleDateFormat("HH:mm:ss", Locale.US);
     private TextView logBtn;
+    private static String lastNtfKey = "";
+    private static long lastNtfAt = 0;
 
     // 等待用户授权的摄像头/麦克风请求
     private PermissionRequest pendingMedia;
@@ -168,6 +170,7 @@ public class MainActivity extends Activity {
         chatHost = hostOf(chatUrl);
 
         createChannels(); // 安卓 13 会在这时弹出"允许通知"
+        startKeepAlive();
         applyCallFlags(getIntent());
 
         root = new FrameLayout(this);
@@ -280,6 +283,31 @@ public class MainActivity extends Activity {
             addLog("已请求进入画中画 比例=" + ratio);
         } catch (Exception e) {
             addLog("进入画中画失败：" + e);
+        }
+    }
+
+    // ---------------------------------------------------------------- 后台保持
+
+    /** 启动前台服务（通知栏会有一条常驻小通知），防止系统在后台冻结整个软件 */
+    private void startKeepAlive() {
+        try {
+            Intent sv = new Intent(this, KeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(sv);
+            } else {
+                startService(sv);
+            }
+            addLog("已请求启动后台保持服务");
+        } catch (Throwable e) {
+            addLog("启动后台保持服务失败：" + e);
+        }
+    }
+
+    /** 给服务等其他类写日志用 */
+    static void slog(String m) {
+        synchronized (LOGS) {
+            LOGS.add(LOG_FMT.format(new Date()) + " " + m);
+            while (LOGS.size() > 600) LOGS.remove(0);
         }
     }
 
@@ -427,9 +455,19 @@ public class MainActivity extends Activity {
     private void showSysNotification(String title, String body, String tag) {
         addLog("软件收到通知请求 标题=" + title + " 内容=" + body + " tag=" + tag
                 + " 软件在前台=" + resumed);
-        if (resumed) {
-            addLog("→ 不弹：软件在前台（resumed=true）");
+        if (resumed && "vcall".equals(tag)) {
+            addLog("→ 不弹：来电时软件在前台，网页里已有来电界面");
             return;
+        }
+        long now = System.currentTimeMillis();
+        String key = tag + "|" + title + "|" + body;
+        synchronized (LOGS) {
+            if (key.equals(lastNtfKey) && now - lastNtfAt < 3000) {
+                addLog("→ 不弹：3 秒内重复的同一条通知");
+                return;
+            }
+            lastNtfKey = key;
+            lastNtfAt = now;
         }
         try {
             boolean on = NotificationManagerCompat.from(this).areNotificationsEnabled();
