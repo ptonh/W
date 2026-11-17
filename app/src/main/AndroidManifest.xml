@@ -2,19 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.app">
 
-    <!-- 网络必须 -->
+    <!-- 网络 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- WebRTC / getUserMedia 核心权限 -->
+    <!-- 视频通话、语音消息 -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- 可选：帮助后台音频或前台服务 -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <!-- 可选：振动 -->
+    <!-- 网页里的振动（来电提示等） -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 把下载的文件保存到"下载"目录 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <!-- 没有摄像头或麦克风的设备也允许安装 -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -23,15 +27,22 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
 
-        <activity 
+        <activity
             android:name=".MainActivity"
-            android:supportsPictureInPicture="true"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation">
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboard|keyboardHidden|uiMode">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- 长按桌面图标出现"设置地址" -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
     </application>
 
