@@ -54,6 +54,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -88,12 +89,6 @@ public class MainActivity extends Activity {
     // 视频域名默认值（用户不填写时使用）
     private static final String DEFAULT_VIDEO_HOST = "";
 
-    // 通知渠道：消息（系统默认通知音）、来电（系统来电铃声，持续响）
-    private static final String CH_MSG = "chat_msg2";
-    private static final String CH_CALL = "chat_call";
-    private static final int CALL_NID = 1001;
-    private static final long CALL_RING_MS = 60 * 1000L; // 与聊天脚本的 RING_MS 一致
-
     // 记录 <a download="文件名"> 的文件名，下载时用
     private static final String HOOK_JS =
             "(function(){if(window.__hk)return;window.__hk=1;"
@@ -111,11 +106,13 @@ public class MainActivity extends Activity {
             + "try{Object.defineProperty(window,'Notification',{value:N,configurable:true,writable:true});}catch(e){window.Notification=N;}\n"
             + "try{if(window.ServiceWorkerRegistration){ServiceWorkerRegistration.prototype.showNotification=function(t,o){send(t,o);return Promise.resolve();};}}catch(e){}\n"
             + "var recent={};\n"
-            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){var un=0;try{un=rsum[r].un||0;}catch(z){}var n=un>0?un:list.length;var tg='room-'+r;recent[tg]=Date.now();send(roomTitle(r),{body:(n>1?'['+n+'条] ':'')+(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80),tag:tg});}}catch(x){}return rv;};nw.__f=1;window.newMsgNotice=nw;}}catch(e){}\n"
+            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){var un=0;try{un=rsum[r].un||0;}catch(z){}var n=un>0?un:list.length;var tg='room-'+r;recent[tg]=Date.now();var ms=0;for(var i=0;i<list.length;i++){if(list[i].seq>ms)ms=list[i].seq;}HostBridge.notifyMsg(String(roomTitle(r)),String((n>1?'['+n+'条] ':'')+(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80)),tg,String(ms));}}catch(x){}return rv;};nw.__f=1;window.newMsgNotice=nw;}}catch(e){}\n"
             + "try{var oss=window.sysShow;if(typeof oss==='function'&&!oss.__s){var ns=function(t,b,tg){try{if(tg&&String(tg).indexOf('room-')===0&&recent[tg]&&Date.now()-recent[tg]<3000){return Promise.resolve();}}catch(x){}return oss.apply(this,arguments);};ns.__s=1;window.sysShow=ns;}}catch(e){}\n"
             + "window.__pipPrep=function(){try{var L=document.getElementById('vcL');if(!L)return;L.classList.remove('pip');if(L.classList.contains('mini')){if(window.vcMini)vcMini(false);else L.classList.remove('mini','bubble');}}catch(e){}};\n"
             + "window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='vcall')return;var F=document.getElementById('vcF');if(!F||e.source!==F.contentWindow)return;if(d.type==='pip-fail'){e.stopImmediatePropagation();try{HostBridge.pip();}catch(x){}}},true);\n"
             + "var last=null;setInterval(function(){var on=false;try{on=!!(document.getElementById('vcF')&&vc&&vc.id&&vc.st==='act');}catch(x){}if(on!==last){last=on;try{HostBridge.call(on);}catch(x){}}},1000);\n"
+            + "try{var oa=window.api;if(typeof oa==='function'&&!oa.__a){var na=function(p){try{var q=String(p);if(q.indexOf('/api/sync')===0){var mm=/after=(\\d+)/.exec(q);if(mm)HostBridge.seq(mm[1]);}}catch(x){}return oa.apply(this,arguments);};na.__a=1;window.api=na;}}catch(e){}\n"
+            + "var lsA='',lsC='';setInterval(function(){try{var a=String(name)+'|'+String(token)+'|'+String(grant)+'|'+String(lgrant);if(a!==lsA){lsA=a;HostBridge.auth(String(name||''),String(token||''),String(grant||''),String(lgrant||''));}var c={on:!!sysOk(),rooms:{},nicks:{}};try{for(var i=0;i<rooms.length;i++){var rr=rooms[i];c.rooms[rr.id]={t:roomTitle(rr.id),n:rsNtf(rr.id)?1:0};}}catch(e1){}try{for(var u in prof){if(prof[u]&&prof[u].nick)c.nicks[u]=prof[u].nick;}}catch(e2){}var cs=JSON.stringify(c);if(cs!==lsC){lsC=cs;HostBridge.cfg(cs);}}catch(e){}},2000);\n"
             + "})();\n";
     private FrameLayout root;
     private WebView webView;
@@ -130,6 +127,8 @@ public class MainActivity extends Activity {
 
     private volatile boolean inCall = false;
     private volatile boolean resumed = false;
+    /** 软件是否在前台可见（后台查询服务据此决定要不要查） */
+    static volatile boolean visible = false;
 
     // 等待用户授权的摄像头/麦克风请求
     private PermissionRequest pendingMedia;
@@ -155,7 +154,8 @@ public class MainActivity extends Activity {
         videoHost = prefs.getString("video_host", DEFAULT_VIDEO_HOST);
         chatHost = hostOf(chatUrl);
 
-        createChannels(); // 安卓 13 会在这时弹出"允许通知"
+        Notifier.init(this); // 安卓 13 会在这时弹出"允许通知"
+        applyBg();
         applyCallFlags(getIntent());
 
         root = new FrameLayout(this);
@@ -185,10 +185,23 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        visible = true;
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        visible = false;
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         resumed = true;
-        cancelCallNotification(); // 回到软件，来电界面已在网页里，停掉通知铃声
+        Notifier.cancelCall(this); // 回到软件，来电界面已在网页里，停掉通知铃声
+        Notifier.cancelMsgs(this);
     }
 
     @Override
@@ -309,11 +322,11 @@ public class MainActivity extends Activity {
         prefs.edit().putBoolean("ntf_guided", true).apply();
         new AlertDialog.Builder(this)
                 .setTitle("开启消息提醒")
-                .setMessage("部分手机默认不给新软件开启横幅、声音和振动。请在接下来的页面里把「横幅」「声音」「振动」打开，有新消息时才会像微信一样提醒你。以后也可以在设置里再次进入。")
+                .setMessage("部分手机默认不给新软件开启横幅、声音和振动。请在接下来的页面里把「横幅」「声音」「振动」打开，有新消息时才会像微信一样提醒你。如果希望软件在后台也能收到提醒，还要在 设置→应用→这个软件→省电策略 里选「无限制」。以后也可以在软件设置里再次进入。")
                 .setPositiveButton("去设置", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
-                        openChannelSettings(CH_MSG);
+                        openChannelSettings(Notifier.CH);
                     }
                 })
                 .setNegativeButton("以后再说", null)
@@ -322,120 +335,35 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- 系统通知
 
-    private void createChannels() {
-        if (Build.VERSION.SDK_INT < 26) return;
-        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm == null) return;
+    /** 网页转来的通知：消息走统一渠道，来电用来电样式 */
+    private void showSysNotification(String title, String body, String tag) {
+        if (resumed && "vcall".equals(tag)) return; // 来电时软件在前台，网页里已有来电界面
         try {
-            nm.deleteNotificationChannel("chat_msg"); // 旧渠道没有明确声音/振动，删掉
+            if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return;
+            if ("vcall".equals(tag)) {
+                Notifier.showCall(this, title, body);
+            } else {
+                Notifier.showMsg(this, title, body, tag);
+            }
         } catch (Throwable ignored) {
         }
-
-        NotificationChannel msg = new NotificationChannel(CH_MSG, "聊天消息",
-                NotificationManager.IMPORTANCE_HIGH);
-        msg.setDescription("新消息提醒（横幅、声音、振动）");
-        AudioAttributes ma = new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build();
-        msg.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), ma);
-        msg.enableVibration(true);
-        msg.setVibrationPattern(new long[]{0, 250, 150, 250});
-        msg.enableLights(true);
-        msg.setShowBadge(true);
-        msg.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        nm.createNotificationChannel(msg);
-
-        NotificationChannel call = new NotificationChannel(CH_CALL, "来电",
-                NotificationManager.IMPORTANCE_HIGH);
-        AudioAttributes aa = new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build();
-        call.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), aa);
-        call.enableVibration(true);
-        call.setVibrationPattern(new long[]{0, 600, 400, 600, 400, 600});
-        call.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        nm.createNotificationChannel(call);
     }
 
-    private void showSysNotification(String title, String body, String tag) {
-        if (resumed && "vcall".equals(tag)) {
-            return;
-        }
-
+    /** 按设置开启 / 关闭后台消息提醒（前台服务，通知栏会常驻一条小通知） */
+    private void applyBg() {
         try {
-            boolean on = NotificationManagerCompat.from(this).areNotificationsEnabled();
-            if (!on) {
-                return;
+            Intent sv = new Intent(this, PollService.class);
+            if (prefs.getBoolean("bg_on", true)) {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(sv);
+                } else {
+                    startService(sv);
+                }
+            } else {
+                stopService(sv);
             }
-            doShowNotification(title, body, tag);
-        } catch (Throwable e) {
+        } catch (Throwable ignored) {
         }
-    }
-
-    private void doShowNotification(String title, String body, String tag) {
-        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm == null) {
-            return;
-        }
-        createChannels();
-        boolean isCall = "vcall".equals(tag);
-        String chId = isCall ? CH_CALL : CH_MSG;
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = nm.getNotificationChannel(chId);
-            if (ch != null && ch.getImportance() == NotificationManager.IMPORTANCE_NONE) {
-                return;
-            }
-        }
-        Intent it = new Intent(this, MainActivity.class);
-        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        if (isCall) it.putExtra("call", true);
-        PendingIntent pi = PendingIntent.getActivity(this, isCall ? 1 : 0, it,
-                PendingIntent.FLAG_UPDATE_CURRENT);
-        int id;
-        Notification n;
-        if (isCall) {
-            NotificationCompat.Builder b = new NotificationCompat.Builder(this, CH_CALL)
-                    .setSmallIcon(android.R.drawable.stat_sys_phone_call)
-                    .setContentTitle(title.length() > 0 ? title : "来电")
-                    .setContentText(body)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setOngoing(true)
-                    .setAutoCancel(true)
-                    .setContentIntent(pi)
-                    .setFullScreenIntent(pi, true)
-                    .setTimeoutAfter(CALL_RING_MS);
-            if (Build.VERSION.SDK_INT < 26) {
-                b.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
-                        android.media.AudioManager.STREAM_RING);
-                b.setVibrate(new long[]{0, 600, 400, 600, 400, 600});
-            }
-            n = b.build();
-            n.flags |= Notification.FLAG_INSISTENT; // 铃声重复响，直到接听 / 取消 / 超时
-            id = CALL_NID;
-        } else {
-            n = new NotificationCompat.Builder(this, CH_MSG)
-                    .setSmallIcon(android.R.drawable.stat_notify_chat)
-                    .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                    .setContentTitle(title.length() > 0 ? title : "新消息")
-                    .setContentText(body)
-                    .setAutoCancel(true)
-                    .setDefaults(Notification.DEFAULT_ALL)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setContentIntent(pi)
-                    .build();
-            id = tag.length() > 0 ? tag.hashCode() : (int) System.currentTimeMillis();
-        }
-        nm.cancel(id); // 先取消同一聊天室的旧通知，让新消息重新弹横幅、响铃
-        nm.notify(id, n);
-    }
-
-    private void cancelCallNotification() {
-        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm != null) nm.cancel(CALL_NID);
     }
 
     /** 点来电通知进来时，锁屏上也能亮屏显示 */
@@ -581,9 +509,13 @@ public class MainActivity extends Activity {
         box.addView(t3);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(linkBtn("消息通知设置", CH_MSG));
-        row.addView(linkBtn("来电设置", CH_CALL));
+        row.addView(linkBtn("通知设置", Notifier.CH));
         box.addView(row);
+
+        final CheckBox cbBg = new CheckBox(this);
+        cbBg.setText("后台消息提醒（通知栏会常驻一条小通知）");
+        cbBg.setChecked(prefs.getBoolean("bg_on", true));
+        box.addView(cbBg);
 
         final AlertDialog d = new AlertDialog.Builder(this)
                 .setTitle("设置")
@@ -613,7 +545,9 @@ public class MainActivity extends Activity {
                         chatUrl = u;
                         chatHost = hostOf(u);
                         videoHost = vh;
-                        prefs.edit().putString("chat_url", chatUrl).putString("video_host", videoHost).apply();
+                        prefs.edit().putString("chat_url", chatUrl).putString("video_host", videoHost)
+                                .putBoolean("bg_on", cbBg.isChecked()).apply();
+                        applyBg();
                         d.dismiss();
                         loadChat();
                     }
@@ -992,6 +926,51 @@ public class MainActivity extends Activity {
                             body == null ? "" : body, tag == null ? "" : tag);
                 }
             });
+        }
+
+        // 网页新消息提醒：带上这批消息的最大序号，已经通知过的不再重复通知
+        @JavascriptInterface
+        public void notifyMsg(final String title, final String body, final String tag, String seq) {
+            long sq = 0;
+            try {
+                sq = Long.parseLong(seq);
+            } catch (Exception ignored) {
+            }
+            if (sq > 0 && sq <= Notifier.notifiedSeq(MainActivity.this)) return;
+            if (sq > Notifier.lastSeq) Notifier.lastSeq = sq;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    showSysNotification(title == null ? "" : title,
+                            body == null ? "" : body, tag == null ? "" : tag);
+                }
+            });
+        }
+
+        // 把登录信息交给后台查询服务
+        @JavascriptInterface
+        public void auth(String n, String t, String g, String l) {
+            getSharedPreferences("bg_state", MODE_PRIVATE).edit()
+                    .putString("name", n).putString("token", t)
+                    .putString("grant", g).putString("lgrant", l).apply();
+        }
+
+        // 把聊天室名称、是否开通知、昵称交给后台查询服务
+        @JavascriptInterface
+        public void cfg(String json) {
+            getSharedPreferences("bg_state", MODE_PRIVATE).edit().putString("cfg", json).apply();
+        }
+
+        // 网页当前同步到的消息序号
+        @JavascriptInterface
+        public void seq(String v) {
+            long sq = 0;
+            try {
+                sq = Long.parseLong(v);
+            } catch (Exception ignored) {
+            }
+            SharedPreferences sp = getSharedPreferences("bg_state", MODE_PRIVATE);
+            if (sq > sp.getLong("seq", 0)) sp.edit().putLong("seq", sq).apply();
         }
 
         // 视频页自己的画中画按钮（网页的画中画在 WebView 里不能用）→ 改用软件的画中画
