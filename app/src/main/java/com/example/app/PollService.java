@@ -35,7 +35,11 @@ public class PollService extends Service {
 
     private static final long POLL_MS = 8000;   // 查询间隔（毫秒）。免费版 Worker 每天约 10 万次请求，别调太小
     private static final long PAGE_ALIVE_MS = 20000; // 网页 20 秒内同步过，就认为它没被冻住，不重复查
-    private static final String CH_KEEP = "chat_keep2";
+    // 常驻通知的渠道：创建时就是"已关闭"（IMPORTANCE_NONE），安装后通知栏里不会出现这条通知，服务照常运行。
+    // 想让它显示出来时，在系统里把这个类别打开即可。如果发现关闭后软件更容易被系统杀掉，
+    // 把 IMPORTANCE_NONE 改成 IMPORTANCE_MIN，并把渠道名 chat_keep3 换成新的（如 chat_keep4）。
+    private static final String CH_KEEP = "chat_keep3";
+    private static final int KEEP_IMPORTANCE = NotificationManager.IMPORTANCE_NONE;
     private static final int NID = 2001;
 
     private volatile boolean running = false;
@@ -55,10 +59,10 @@ public class PollService extends Service {
             if (Build.VERSION.SDK_INT >= 26 && nm != null) {
                 try {
                     nm.deleteNotificationChannel("chat_keep");
+                    nm.deleteNotificationChannel("chat_keep2");
                 } catch (Throwable ignored) {
                 }
-                NotificationChannel c = new NotificationChannel(CH_KEEP, "后台保持连接",
-                        NotificationManager.IMPORTANCE_MIN); // 最低：不响、不震动、不弹横幅、状态栏不显示图标
+                NotificationChannel c = new NotificationChannel(CH_KEEP, "后台保持连接", KEEP_IMPORTANCE);
                 c.setShowBadge(false);
                 c.enableVibration(false);
                 c.setSound(null, null);
