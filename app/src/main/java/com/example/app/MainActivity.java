@@ -112,6 +112,8 @@ public class MainActivity extends Activity {
             + "try{var oa=window.api;if(typeof oa==='function'&&!oa.__a){var na=function(p){try{var q=String(p);if(q.indexOf('/api/sync')===0){var mm=/after=(\\d+)/.exec(q);if(mm)HostBridge.seq(mm[1]);}}catch(x){}return oa.apply(this,arguments);};na.__a=1;window.api=na;}}catch(e){}\n"
             + "var lsA='',lsC='';setInterval(function(){try{var a=String(name)+'|'+String(token)+'|'+String(grant)+'|'+String(lgrant);if(a!==lsA){lsA=a;HostBridge.auth(String(name||''),String(token||''),String(grant||''),String(lgrant||''));}var c={on:!!sysOk(),rooms:{},nicks:{}};try{for(var i=0;i<rooms.length;i++){var rr=rooms[i];c.rooms[rr.id]={t:roomTitle(rr.id),n:rsNtf(rr.id)?1:0};}}catch(e1){}try{for(var u in prof){if(prof[u]&&prof[u].nick)c.nicks[u]=prof[u].nick;}}catch(e2){}var cs=JSON.stringify(c);if(cs!==lsC){lsC=cs;HostBridge.cfg(cs);}}catch(e){}},2000);\n"
             + "try{var ovf=window.vcFrame;if(typeof ovf==='function'&&!ovf.__v){var nvf=function(url){try{if(url){var u=new URL(url,location.href);if(window.__vurl){try{var o=new URL(window.__vurl);u.protocol=o.protocol;u.host=o.host;var au=o.searchParams.get('auth');if(au)u.searchParams.set('auth',au);}catch(x1){}}url=u.toString();var org=u.origin;try{if(vcFreeOn)vcFreeO=org;else if(vc&&vc.id)vc.origin=org;}catch(x2){}try{HostBridge.video(url);}catch(x3){}}}catch(x){}return ovf.call(this,url);};nvf.__v=1;window.vcFrame=nvf;}}catch(e){}\n"
+            + "try{var ovi=window.vcShowIn;if(typeof ovi==='function'&&!ovi.__c){var nvi=function(id,room,voice){var fresh=(vcIn!==id);var rv=ovi.apply(this,arguments);try{if(fresh&&vcIn===id&&!document.hidden&&sysOk()){HostBridge.notify(String(roomTitle(room)),voice?'邀请你语音通话':'邀请你视频通话','vcall');}}catch(x){}return rv;};nvi.__c=1;window.vcShowIn=nvi;}}catch(e){}\n"
+            + "try{var ovh=window.vcHideIn;if(typeof ovh==='function'&&!ovh.__c){var nvh=function(){var rv=ovh.apply(this,arguments);try{HostBridge.callEnd();}catch(x){}return rv;};nvh.__c=1;window.vcHideIn=nvh;}}catch(e){}\n"
             + "})();\n";
     private FrameLayout root;
     private WebView webView;
@@ -322,7 +324,6 @@ public class MainActivity extends Activity {
 
     /** 网页转来的通知：消息走统一渠道，来电用来电样式 */
     private void showSysNotification(String title, String body, String tag) {
-        if (resumed && "vcall".equals(tag)) return; // 来电时软件在前台，网页里已有来电界面
         try {
             if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return;
             if ("vcall".equals(tag)) {
@@ -967,6 +968,17 @@ public class MainActivity extends Activity {
             }
             SharedPreferences sp = getSharedPreferences("bg_state", MODE_PRIVATE);
             if (sq > sp.getLong("seq", 0)) sp.edit().putLong("seq", sq).apply();
+        }
+
+        // 来电界面关了（接听 / 拒绝 / 超时 / 对方取消）：取消来电通知，停掉铃声
+        @JavascriptInterface
+        public void callEnd() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Notifier.cancelCall(MainActivity.this);
+                }
+            });
         }
 
         // 聊天页要打开的视频网址：记下它的域名，用来放行摄像头 / 麦克风（只认聊天页自己设置的那个）
