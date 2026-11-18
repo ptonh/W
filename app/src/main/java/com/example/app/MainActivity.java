@@ -12,13 +12,18 @@ import android.app.PictureInPictureParams;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.view.Gravity;
+import android.view.MotionEvent;
+import android.widget.ScrollView;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.MediaScannerConnection;
 import android.media.RingtoneManager;
@@ -34,8 +39,6 @@ import android.support.v4.content.ContextCompat;
 import android.text.InputType;
 import android.util.Base64;
 import android.util.Rational;
-import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -53,7 +56,6 @@ import android.webkit.WebViewClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -62,16 +64,14 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 /**
  * 聊天网页的外壳。
  * - 聊天网址可在软件里设置（首次打开弹窗；之后长按桌面图标选"设置地址"，或页面打不开时点"修改地址"）。
- * - 视频嵌在聊天页里（iframe），所以软件负责：权限、选文件、下载、全屏、外链、系统通知、来电铃声、画中画、后台保活。
+ * - 视频嵌在聊天页里（iframe），所以软件负责：权限、选文件、下载、全屏、外链、系统通知、来电铃声、画中画。
  */
 public class MainActivity extends Activity {
 
@@ -87,14 +87,11 @@ public class MainActivity extends Activity {
     // 视频域名默认值（用户不填写时使用）
     private static final String DEFAULT_VIDEO_HOST = "";
 
-    // 通知渠道（尽量简单，消息走系统默认声音）
-    private static final String CH_MSG = "chat_msg_v3";
-    private static final String CH_CALL = "chat_call_v3";
+    // 通知渠道：消息（系统默认通知音）、来电（系统来电铃声，持续响）
+    private static final String CH_MSG = "chat_msg2";
+    private static final String CH_CALL = "chat_call";
     private static final int CALL_NID = 1001;
-    private static final long CALL_RING_MS = 60 * 1000L;
-
-    // 未读消息数（用于通知角标数字）
-    private int unreadCount = 0;
+    private static final long CALL_RING_MS = 60 * 1000L; // 与聊天脚本的 RING_MS 一致
 
     // 记录 <a download="文件名"> 的文件名，下载时用
     private static final String HOOK_JS =
@@ -116,7 +113,9 @@ public class MainActivity extends Activity {
             + "lg('注入完成 url='+location.href+' 有serviceWorker='+('serviceWorker' in navigator)+' 权限='+Notification.permission);\n"
             + "function wrap(n){try{var f=window[n];if(typeof f!=='function'||f.__w)return;var w=function(){var a=[];try{a.push('sysOk='+sysOk(),'hidden='+document.hidden,'focus='+document.hasFocus(),'ntf='+lsGet('ntf'));}catch(x){a.push('读状态失败 '+x);}lg(n+' 被调用 '+a.join(' '));return f.apply(this,arguments);};w.__w=1;window[n]=w;}catch(e){lg('包装失败 '+n+' '+e);}}\n"
             + "['sysNotice','backlogNotice','sysShow','newMsgNotice','vcShowIn'].forEach(wrap);\n"
-            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{if(!document.hidden){var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){send(roomTitle(r),{body:(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80)+(list.length>1?'（共 '+list.length+' 条新消息）':''),tag:'room-'+r});}}}catch(x){lg('前台通知失败 '+x);}return rv;};nw.__f=1;nw.__w=1;window.newMsgNotice=nw;}}catch(e){lg('包装newMsgNotice失败 '+e);}\n"
+            + "var recent={};\n"
+            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){var un=0;try{un=rsum[r].un||0;}catch(z){}var n=un>0?un:list.length;var tg='room-'+r;recent[tg]=Date.now();send(roomTitle(r),{body:(n>1?'['+n+'条] ':'')+(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80),tag:tg});}}catch(x){lg('消息通知失败 '+x);}return rv;};nw.__f=1;nw.__w=1;window.newMsgNotice=nw;}}catch(e){lg('包装newMsgNotice失败 '+e);}\n"
+            + "try{var oss=window.sysShow;if(typeof oss==='function'&&!oss.__s){var ns=function(t,b,tg){try{if(tg&&String(tg).indexOf('room-')===0&&recent[tg]&&Date.now()-recent[tg]<3000){lg('跳过重复：这条已由新消息通知发出 '+tg);return Promise.resolve();}}catch(x){}return oss.apply(this,arguments);};ns.__s=1;ns.__w=1;window.sysShow=ns;}}catch(e){lg('包装sysShow失败 '+e);}\n"
             + "document.addEventListener('visibilitychange',function(){lg('visibilitychange hidden='+document.hidden);});\n"
             + "window.addEventListener('focus',function(){lg('页面获得焦点');});\n"
             + "window.addEventListener('blur',function(){lg('页面失去焦点');});\n"
@@ -127,7 +126,6 @@ public class MainActivity extends Activity {
             + "window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='vcall')return;var F=document.getElementById('vcF');if(!F||e.source!==F.contentWindow)return;lg('视频页消息 type='+d.type+(d.reason?' reason='+d.reason:''));if(d.type==='pip-fail'){e.stopImmediatePropagation();try{HostBridge.pip();}catch(x){}}},true);\n"
             + "var last=null;setInterval(function(){var on=false;try{on=!!(document.getElementById('vcF')&&vc&&vc.id&&vc.st==='act');}catch(x){}if(on!==last){last=on;try{HostBridge.call(on);}catch(x){}}},1000);\n"
             + "})();\n";
-
     private FrameLayout root;
     private WebView webView;
     private AppChrome chrome;
@@ -146,8 +144,6 @@ public class MainActivity extends Activity {
     private static final List<String> LOGS = new ArrayList<String>();
     private static final SimpleDateFormat LOG_FMT = new SimpleDateFormat("HH:mm:ss", Locale.US);
     private TextView logBtn;
-    private static String lastNtfKey = "";
-    private static long lastNtfAt = 0;
 
     // 等待用户授权的摄像头/麦克风请求
     private PermissionRequest pendingMedia;
@@ -173,7 +169,7 @@ public class MainActivity extends Activity {
         videoHost = prefs.getString("video_host", DEFAULT_VIDEO_HOST);
         chatHost = hostOf(chatUrl);
 
-        createChannels();
+        createChannels(); // 安卓 13 会在这时弹出"允许通知"
         startKeepAlive();
         applyCallFlags(getIntent());
 
@@ -211,13 +207,7 @@ public class MainActivity extends Activity {
         super.onResume();
         resumed = true;
         addLog("onResume 回到前台");
-        cancelCallNotification();
-
-        // 回到软件后清零未读数
-        if (unreadCount > 0) {
-            addLog("清零未读数，原数量=" + unreadCount);
-            unreadCount = 0;
-        }
+        cancelCallNotification(); // 回到软件，来电界面已在网页里，停掉通知铃声
     }
 
     @Override
@@ -228,12 +218,6 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 21) {
             android.webkit.CookieManager.getInstance().flush();
         }
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
-        addLog("onStop 软件已不可见");
     }
 
     @Override
@@ -289,6 +273,7 @@ public class MainActivity extends Activity {
                 toast("这台手机不支持画中画");
                 return;
             }
+            // 通话时先让聊天页把通话层恢复成全屏，小窗里才能看到视频
             runJs("window.__pipPrep&&window.__pipPrep()");
             Rational ratio = (inCall && customView == null) ? new Rational(9, 16) : new Rational(16, 9);
             PictureInPictureParams params = new PictureInPictureParams.Builder()
@@ -303,6 +288,7 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- 后台保持
 
+    /** 启动前台服务（通知栏会有一条常驻小通知），防止系统在后台冻结整个软件 */
     private void startKeepAlive() {
         try {
             Intent sv = new Intent(this, KeepAliveService.class);
@@ -426,16 +412,28 @@ public class MainActivity extends Activity {
                         }
                     }
                 })
-                .setNeutralButton("测试通知", new DialogInterface.OnClickListener() {
+                .setNeutralButton("清空", new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface d, int w) {
-                        addLog("用户点击了「测试通知」");
-                        showSysNotification("测试通知", "这是一条测试消息，用于检查横幅和声音", "test");
-                        toast("已发送测试通知");
+                        synchronized (LOGS) {
+                            LOGS.clear();
+                        }
                     }
                 })
-                .setNegativeButton("关闭", null)
+                .setNegativeButton("测试通知", new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        addLog("【手动测试】发一条测试通知");
+                        showSysNotification("测试通知", "能看到横幅、听到声音就正常", "test-" + System.currentTimeMillis());
+                    }
+                })
                 .show();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        addLog("onStop 软件已不可见");
     }
 
     // ---------------------------------------------------------------- 系统通知
@@ -444,38 +442,68 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT < 26) return;
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
+        try {
+            nm.deleteNotificationChannel("chat_msg"); // 旧渠道没有明确声音/振动，删掉
+        } catch (Throwable ignored) {
+        }
 
-        // 消息渠道：尽量使用系统默认声音和振动，减少用户需要单独设置
         NotificationChannel msg = new NotificationChannel(CH_MSG, "聊天消息",
                 NotificationManager.IMPORTANCE_HIGH);
-        msg.setDescription("新消息通知");
-        msg.setShowBadge(true);                    // 允许显示未读数字
+        msg.setDescription("新消息提醒（横幅、声音、振动）");
+        AudioAttributes ma = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+        msg.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), ma);
         msg.enableVibration(true);
+        msg.setVibrationPattern(new long[]{0, 250, 150, 250});
+        msg.enableLights(true);
+        msg.setShowBadge(true);
         msg.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        // 使用系统默认通知声音
-        msg.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
-                new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build());
         nm.createNotificationChannel(msg);
 
-        // 来电渠道（需要铃声，保留单独渠道）
         NotificationChannel call = new NotificationChannel(CH_CALL, "来电",
                 NotificationManager.IMPORTANCE_HIGH);
-        call.setDescription("视频来电");
-        call.setShowBadge(false);
+        AudioAttributes aa = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build();
+        call.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), aa);
         call.enableVibration(true);
         call.setVibrationPattern(new long[]{0, 600, 400, 600, 400, 600});
         call.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        call.setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
-                new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build());
         nm.createNotificationChannel(call);
+    }
 
-        addLog("已创建通知渠道 CH_MSG=" + CH_MSG + " CH_CALL=" + CH_CALL);
+    /** 把声音相关的系统状态写进日志，方便判断为什么没响 */
+    private void logSoundState(String chId) {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            StringBuilder sb = new StringBuilder("声音状态：");
+            if (am != null) {
+                sb.append("铃声模式=").append(am.getRingerMode()).append("(0静音 1振动 2正常) ")
+                        .append("通知音量=").append(am.getStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION))
+                        .append("/").append(am.getStreamMaxVolume(android.media.AudioManager.STREAM_NOTIFICATION)).append(" ");
+            }
+            if (nm != null && Build.VERSION.SDK_INT >= 23) {
+                sb.append("勿扰=").append(nm.getCurrentInterruptionFilter()).append("(1关闭 2仅重要 3全静音 4仅闹钟) ");
+            }
+            if (nm != null && Build.VERSION.SDK_INT >= 26) {
+                NotificationChannel ch = nm.getNotificationChannel(chId);
+                if (ch == null) {
+                    sb.append("渠道不存在");
+                } else {
+                    sb.append("渠道[").append(chId).append("] 重要性=").append(ch.getImportance())
+                            .append(" 声音=").append(ch.getSound())
+                            .append(" 振动=").append(ch.shouldVibrate())
+                            .append(" 锁屏=").append(ch.getLockscreenVisibility());
+                }
+            }
+            addLog(sb.toString());
+        } catch (Throwable e) {
+            addLog("读取声音状态失败：" + e);
+        }
     }
 
     private void showSysNotification(String title, String body, String tag) {
@@ -485,16 +513,7 @@ public class MainActivity extends Activity {
             addLog("→ 不弹：来电时软件在前台，网页里已有来电界面");
             return;
         }
-        long now = System.currentTimeMillis();
-        String key = tag + "|" + title + "|" + body;
-        synchronized (LOGS) {
-            if (key.equals(lastNtfKey) && now - lastNtfAt < 2500) {
-                addLog("→ 不弹：2.5 秒内重复的同一条通知");
-                return;
-            }
-            lastNtfKey = key;
-            lastNtfAt = now;
-        }
+
         try {
             boolean on = NotificationManagerCompat.from(this).areNotificationsEnabled();
             addLog("系统通知总开关=" + on);
@@ -502,40 +521,9 @@ public class MainActivity extends Activity {
                 addLog("→ 不弹：系统里这个软件的通知被关了（设置→应用→通知）");
                 return;
             }
-            logNotificationStatus();
             doShowNotification(title, body, tag);
         } catch (Throwable e) {
             addLog("→ 发通知出错：" + e);
-        }
-    }
-
-    private void logNotificationStatus() {
-        try {
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) return;
-
-            if (Build.VERSION.SDK_INT >= 26) {
-                NotificationChannel msgCh = nm.getNotificationChannel(CH_MSG);
-                NotificationChannel callCh = nm.getNotificationChannel(CH_CALL);
-                addLog("消息渠道 重要性=" + (msgCh == null ? "不存在" : msgCh.getImportance())
-                        + " 声音=" + (msgCh != null && msgCh.getSound() != null)
-                        + " 振动=" + (msgCh != null && msgCh.shouldVibrate())
-                        + " 角标=" + (msgCh != null && msgCh.canShowBadge()));
-                addLog("来电渠道 重要性=" + (callCh == null ? "不存在" : callCh.getImportance())
-                        + " 声音=" + (callCh != null && callCh.getSound() != null));
-            }
-
-            if (Build.VERSION.SDK_INT >= 23) {
-                int filter = nm.getCurrentInterruptionFilter();
-                String dnd = "未知";
-                if (filter == NotificationManager.INTERRUPTION_FILTER_ALL) dnd = "关闭";
-                else if (filter == NotificationManager.INTERRUPTION_FILTER_PRIORITY) dnd = "仅优先";
-                else if (filter == NotificationManager.INTERRUPTION_FILTER_NONE) dnd = "完全静音";
-                else if (filter == NotificationManager.INTERRUPTION_FILTER_ALARMS) dnd = "仅闹钟";
-                addLog("勿扰模式=" + dnd);
-            }
-        } catch (Throwable e) {
-            addLog("读取通知状态失败：" + e);
         }
     }
 
@@ -548,18 +536,23 @@ public class MainActivity extends Activity {
         createChannels();
         boolean isCall = "vcall".equals(tag);
         String chId = isCall ? CH_CALL : CH_MSG;
-
-        // 先取消旧的同 tag 通知，避免被当成“更新”而不重新提醒
-        int id = isCall ? CALL_NID : (tag.length() > 0 ? tag.hashCode() : (int) System.currentTimeMillis());
-        nm.cancel(id);
-
+        logSoundState(chId);
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel ch = nm.getNotificationChannel(chId);
+            addLog("渠道 " + chId + " 重要性=" + (ch == null ? "不存在" : String.valueOf(ch.getImportance()))
+                    + "（0=已关闭 3=默认 4=高）");
+            if (ch != null && ch.getImportance() == NotificationManager.IMPORTANCE_NONE) {
+                addLog("→ 不弹：这个通知类别被你关了（设置→应用→通知→类别）");
+                return;
+            }
+        }
         Intent it = new Intent(this, MainActivity.class);
         it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
                 | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         if (isCall) it.putExtra("call", true);
         PendingIntent pi = PendingIntent.getActivity(this, isCall ? 1 : 0, it,
                 PendingIntent.FLAG_UPDATE_CURRENT);
-
+        int id;
         Notification n;
         if (isCall) {
             NotificationCompat.Builder b = new NotificationCompat.Builder(this, CH_CALL)
@@ -579,25 +572,31 @@ public class MainActivity extends Activity {
                 b.setVibrate(new long[]{0, 600, 400, 600, 400, 600});
             }
             n = b.build();
-            n.flags |= Notification.FLAG_INSISTENT;
+            n.flags |= Notification.FLAG_INSISTENT; // 铃声重复响，直到接听 / 取消 / 超时
+            id = CALL_NID;
         } else {
-            // 普通消息：增加未读数
-            unreadCount++;
             n = new NotificationCompat.Builder(this, CH_MSG)
                     .setSmallIcon(android.R.drawable.stat_notify_chat)
+                    .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                     .setContentTitle(title.length() > 0 ? title : "新消息")
                     .setContentText(body)
                     .setAutoCancel(true)
-                    .setDefaults(Notification.DEFAULT_ALL)   // 尽量用系统默认声音+振动
+                    .setDefaults(Notification.DEFAULT_ALL)
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setContentIntent(pi)
-                    .setOnlyAlertOnce(false)
-                    .setNumber(unreadCount)                  // 未读数字
-                    .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
                     .build();
+            id = tag.length() > 0 ? tag.hashCode() : (int) System.currentTimeMillis();
         }
+        nm.cancel(id); // 先取消同一聊天室的旧通知，让新消息重新弹横幅、响铃
         nm.notify(id, n);
-        addLog("→ 已发送系统通知 id=" + id + " 渠道=" + chId + (isCall ? "" : " 未读=" + unreadCount));
+        String act = "";
+        if (Build.VERSION.SDK_INT >= 23) {
+            try {
+                act = " 通知栏里现有 " + nm.getActiveNotifications().length + " 条";
+            } catch (Throwable ignored) {
+            }
+        }
+        addLog("→ 已调用系统发通知 id=" + id + act);
     }
 
     private void cancelCallNotification() {
@@ -605,6 +604,7 @@ public class MainActivity extends Activity {
         if (nm != null) nm.cancel(CALL_NID);
     }
 
+    /** 点来电通知进来时，锁屏上也能亮屏显示 */
     private void applyCallFlags(Intent it) {
         if (it != null && it.getBooleanExtra("call", false)) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
@@ -628,7 +628,7 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new HostBridge(), "HostBridge");
         if (Build.VERSION.SDK_INT >= 26) {
-            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); // 进后台后网页不被降级
         }
 
         webView.setDownloadListener(new DownloadListener() {
@@ -669,6 +669,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 补全 https://，并确认能解析出域名；不合格返回空字符串 */
     private static String normalizeUrl(CharSequence in) {
         String s = in == null ? "" : in.toString().trim();
         if (s.length() == 0) return "";
@@ -690,6 +691,7 @@ public class MainActivity extends Activity {
         try {
             Uri u = Uri.parse(url);
             String sc = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+            // 不允许 intent:、file:、content: 这类可能被滥用的地址
             if (sc.equals("intent") || sc.equals("file") || sc.equals("content") || sc.length() == 0) {
                 return;
             }
@@ -763,6 +765,7 @@ public class MainActivity extends Activity {
                             toast("请输入正确的聊天网址");
                             return;
                         }
+                        // 有输入就用输入的，没输入就用默认值
                         String vh = hostOf(normalizeUrl(e2.getText()));
                         if (vh.length() == 0) {
                             vh = DEFAULT_VIDEO_HOST;
@@ -824,7 +827,7 @@ public class MainActivity extends Activity {
             }
             return true;
         }
-        if (!isMain) return false;
+        if (!isMain) return false; // 页面内嵌的视频等子页面，不拦截
 
         Uri u = Uri.parse(url);
         String sc = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
@@ -836,7 +839,7 @@ public class MainActivity extends Activity {
         if (sc.equals("about") || sc.equals("data") || sc.equals("blob") || sc.equals("javascript")) {
             return false;
         }
-        openExternal(url);
+        openExternal(url); // mailto:、tel: 等交给系统
         return true;
     }
 
@@ -954,6 +957,7 @@ public class MainActivity extends Activity {
             return true;
         }
 
+        // 网页里的新窗口（target=_blank / window.open）一律交给系统浏览器，不替换聊天页
         @Override
         public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
             WebView temp = new WebView(MainActivity.this);
@@ -1034,7 +1038,7 @@ public class MainActivity extends Activity {
     private void finishGrant(PermissionRequest request, List<String> res) {
         request.grant(res.toArray(new String[0]));
         if (res.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
-            webView.setKeepScreenOn(true);
+            webView.setKeepScreenOn(true); // 视频通话时屏幕常亮，重新加载页面后恢复
         }
     }
 
@@ -1099,6 +1103,7 @@ public class MainActivity extends Activity {
 
     // ---------------------------------------------------------------- 下载
 
+    /** 让网页自己把文件取出来（带着登录状态），转成文本交给 HostBridge.save */
     private void fetchAndSave(String url, String contentDisposition, String mimetype) {
         String guess = URLUtil.guessFileName(url, contentDisposition, mimetype);
         String js = "(function(){var u=" + JSONObject.quote(url)
@@ -1134,12 +1139,14 @@ public class MainActivity extends Activity {
             }
         }
 
+        // 视频页发来 connected / ended：记录"是否正在通话"，用于按 Home 键进画中画
         @JavascriptInterface
         public void call(boolean on) {
             inCall = on;
             addLog("通话状态变化 inCall=" + on);
         }
 
+        // 网页的通知转成系统通知；tag 为 vcall 时是来电，用来电铃声
         @JavascriptInterface
         public void notify(final String title, final String body, final String tag) {
             addLog("桥接收到 notify tag=" + tag);
@@ -1152,6 +1159,7 @@ public class MainActivity extends Activity {
             });
         }
 
+        // 视频页自己的画中画按钮（网页的画中画在 WebView 里不能用）→ 改用软件的画中画
         @JavascriptInterface
         public void pip() {
             addLog("桥接收到 pip（视频页的画中画按钮）");
@@ -1225,6 +1233,7 @@ public class MainActivity extends Activity {
         return new File(dir, System.currentTimeMillis() + "_" + name);
     }
 
+    /** 优先存到系统"下载"目录；没权限或失败时存到软件自己的目录 */
     private void writeDownload(String name, byte[] bytes, boolean usePublic) {
         File[] dirs = new File[]{
                 usePublic ? Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) : null,
