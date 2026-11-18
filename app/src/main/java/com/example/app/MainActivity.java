@@ -274,65 +274,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ---------------------------------------------------------------- 通知设置入口
-
-    private TextView linkBtn(String text, final String chId) {
-        TextView b = new TextView(this);
-        b.setText(text);
-        b.setTextColor(0xFF2D7FF9);
-        b.setTextSize(15);
-        b.setPadding(0, dp(8), dp(20), dp(8));
-        b.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                openChannelSettings(chId);
-            }
-        });
-        return b;
-    }
-
-    /** 跳到系统里这个软件的某个通知类别设置页（声音、振动、横幅都在那里改） */
-    private void openChannelSettings(String chId) {
-        try {
-            Intent it;
-            if (Build.VERSION.SDK_INT >= 26) {
-                it = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
-                it.putExtra(Settings.EXTRA_CHANNEL_ID, chId);
-                it.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
-            } else {
-                it = new Intent("android.settings.APP_NOTIFICATION_SETTINGS");
-                it.putExtra("app_package", getPackageName());
-                it.putExtra("app_uid", getApplicationInfo().uid);
-            }
-            startActivity(it);
-        } catch (Throwable e) {
-            try {
-                Intent it = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                it.setData(Uri.parse("package:" + getPackageName()));
-                startActivity(it);
-            } catch (Throwable e2) {
-                toast("打不开系统设置，请手动去 设置→应用→通知");
-            }
-        }
-    }
-
-    /** 首次进入聊天页时提醒一次：部分手机默认不给新软件开横幅、声音、振动 */
-    private void maybeGuideNotify() {
-        if (prefs.getBoolean("ntf_guided", false) || isFinishing()) return;
-        prefs.edit().putBoolean("ntf_guided", true).apply();
-        new AlertDialog.Builder(this)
-                .setTitle("开启消息提醒")
-                .setMessage("部分手机默认不给新软件开启横幅、声音和振动。请在接下来的页面里把「横幅」「声音」「振动」打开，有新消息时才会像微信一样提醒你。如果希望软件在后台也能收到提醒，还要在 设置→应用→这个软件→省电策略 里选「无限制」。以后也可以在软件设置里再次进入。")
-                .setPositiveButton("去设置", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        openChannelSettings(Notifier.CH);
-                    }
-                })
-                .setNegativeButton("以后再说", null)
-                .show();
-    }
-
     // ---------------------------------------------------------------- 系统通知
 
     /** 网页转来的通知：消息走统一渠道，来电用来电样式 */
@@ -504,14 +445,6 @@ public class MainActivity extends Activity {
         e2.setText(videoHost);
         box.addView(e2);
 
-        TextView t3 = new TextView(this);
-        t3.setText("\n通知提醒（声音、振动、横幅在系统设置页里改）");
-        box.addView(t3);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(linkBtn("通知设置", Notifier.CH));
-        box.addView(row);
-
         final CheckBox cbBg = new CheckBox(this);
         cbBg.setText("后台消息提醒（通知栏会常驻一条小通知）");
         cbBg.setChecked(prefs.getBoolean("bg_on", true));
@@ -641,7 +574,6 @@ public class MainActivity extends Activity {
             super.onPageFinished(view, url);
             runJs(HOOK_JS);
             runJs(NOTIFY_JS);
-            if (hostAllowed(hostOf(url))) maybeGuideNotify();
         }
 
         @TargetApi(23)
@@ -964,6 +896,7 @@ public class MainActivity extends Activity {
         // 网页当前同步到的消息序号
         @JavascriptInterface
         public void seq(String v) {
+            Notifier.pageSyncAt = System.currentTimeMillis(); // 网页还在同步，说明没被冻住
             long sq = 0;
             try {
                 sq = Long.parseLong(v);
