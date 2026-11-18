@@ -34,7 +34,8 @@ import java.util.Map;
 public class PollService extends Service {
 
     private static final long POLL_MS = 8000;   // 查询间隔（毫秒）。免费版 Worker 每天约 10 万次请求，别调太小
-    private static final String CH_KEEP = "chat_keep";
+    private static final long PAGE_ALIVE_MS = 20000; // 网页 20 秒内同步过，就认为它没被冻住，不重复查
+    private static final String CH_KEEP = "chat_keep2";
     private static final int NID = 2001;
 
     private volatile boolean running = false;
@@ -52,9 +53,16 @@ public class PollService extends Service {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (Build.VERSION.SDK_INT >= 26 && nm != null) {
+                try {
+                    nm.deleteNotificationChannel("chat_keep");
+                } catch (Throwable ignored) {
+                }
                 NotificationChannel c = new NotificationChannel(CH_KEEP, "后台保持连接",
-                        NotificationManager.IMPORTANCE_LOW);
+                        NotificationManager.IMPORTANCE_MIN); // 最低：不响、不震动、不弹横幅、状态栏不显示图标
                 c.setShowBadge(false);
+                c.enableVibration(false);
+                c.setSound(null, null);
+                c.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
                 nm.createNotificationChannel(c);
             }
             Intent it = new Intent(this, MainActivity.class);
@@ -66,7 +74,9 @@ public class PollService extends Service {
                     .setContentTitle("聊天保持连接中")
                     .setContentText("用于在后台接收消息和来电")
                     .setOngoing(true)
-                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setPriority(NotificationCompat.PRIORITY_MIN)
+                    .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                    .setOnlyAlertOnce(true)
                     .setContentIntent(pi)
                     .build();
             startForeground(NID, n);
@@ -99,6 +109,8 @@ public class PollService extends Service {
                 if (MainActivity.visible) {
                     unread.clear();
                     lastCallId = "";
+                } else if (System.currentTimeMillis() - Notifier.pageSyncAt < PAGE_ALIVE_MS) {
+                    // 网页还在自己同步（没被系统冻住），由网页发通知，这里不重复查询
                 } else {
                     pollOnce();
                 }
