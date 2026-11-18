@@ -10,6 +10,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
 import android.content.ClipData;
+import android.provider.Settings;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Typeface;
@@ -103,27 +104,17 @@ public class MainActivity extends Activity {
     // 把网页的 Notification / showNotification 转给软件；监听视频页的 connected / ended / pip-fail
     private static final String NOTIFY_JS =
               "(function(){if(window.__nt)return;window.__nt=1;\n"
-            + "function lg(m){try{HostBridge.log('[网页] '+m);}catch(e){}}\n"
-            + "function send(t,o){o=o||{};lg('收到通知请求 标题='+t+' tag='+o.tag+' hidden='+document.hidden);try{HostBridge.notify(String(t||''),String(o.body||''),String(o.tag||''));}catch(e){lg('交给软件失败 '+e);}}\n"
+            + "function send(t,o){o=o||{};try{HostBridge.notify(String(t||''),String(o.body||''),String(o.tag||''));}catch(e){}}\n"
             + "function N(t,o){send(t,o);this.close=function(){};this.onclick=null;}\n"
             + "N.permission='granted';\n"
-            + "N.requestPermission=function(cb){lg('页面申请通知权限，已直接答复granted');if(cb)cb('granted');return Promise.resolve('granted');};\n"
+            + "N.requestPermission=function(cb){if(cb)cb('granted');return Promise.resolve('granted');};\n"
             + "try{Object.defineProperty(window,'Notification',{value:N,configurable:true,writable:true});}catch(e){window.Notification=N;}\n"
-            + "try{if(window.ServiceWorkerRegistration){ServiceWorkerRegistration.prototype.showNotification=function(t,o){lg('走了ServiceWorker的showNotification');send(t,o);return Promise.resolve();};}}catch(e){}\n"
-            + "lg('注入完成 url='+location.href+' 有serviceWorker='+('serviceWorker' in navigator)+' 权限='+Notification.permission);\n"
-            + "function wrap(n){try{var f=window[n];if(typeof f!=='function'||f.__w)return;var w=function(){var a=[];try{a.push('sysOk='+sysOk(),'hidden='+document.hidden,'focus='+document.hasFocus(),'ntf='+lsGet('ntf'));}catch(x){a.push('读状态失败 '+x);}lg(n+' 被调用 '+a.join(' '));return f.apply(this,arguments);};w.__w=1;window[n]=w;}catch(e){lg('包装失败 '+n+' '+e);}}\n"
-            + "['sysNotice','backlogNotice','sysShow','newMsgNotice','vcShowIn'].forEach(wrap);\n"
+            + "try{if(window.ServiceWorkerRegistration){ServiceWorkerRegistration.prototype.showNotification=function(t,o){send(t,o);return Promise.resolve();};}}catch(e){}\n"
             + "var recent={};\n"
-            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){var un=0;try{un=rsum[r].un||0;}catch(z){}var n=un>0?un:list.length;var tg='room-'+r;recent[tg]=Date.now();send(roomTitle(r),{body:(n>1?'['+n+'条] ':'')+(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80),tag:tg});}}catch(x){lg('消息通知失败 '+x);}return rv;};nw.__f=1;nw.__w=1;window.newMsgNotice=nw;}}catch(e){lg('包装newMsgNotice失败 '+e);}\n"
-            + "try{var oss=window.sysShow;if(typeof oss==='function'&&!oss.__s){var ns=function(t,b,tg){try{if(tg&&String(tg).indexOf('room-')===0&&recent[tg]&&Date.now()-recent[tg]<3000){lg('跳过重复：这条已由新消息通知发出 '+tg);return Promise.resolve();}}catch(x){}return oss.apply(this,arguments);};ns.__s=1;ns.__w=1;window.sysShow=ns;}}catch(e){lg('包装sysShow失败 '+e);}\n"
-            + "document.addEventListener('visibilitychange',function(){lg('visibilitychange hidden='+document.hidden);});\n"
-            + "window.addEventListener('focus',function(){lg('页面获得焦点');});\n"
-            + "window.addEventListener('blur',function(){lg('页面失去焦点');});\n"
-            + "window.addEventListener('error',function(e){lg('页面错误 '+e.message+' 第'+(e.lineno||'?')+'行');});\n"
-            + "window.addEventListener('unhandledrejection',function(e){lg('未处理的Promise错误 '+((e.reason&&e.reason.message)||e.reason));});\n"
-            + "var lt=Date.now();setInterval(function(){var n=Date.now(),g=n-lt;lt=n;if(g>4000)lg('网页脚本被暂停了约 '+Math.round(g/1000)+' 秒 hidden='+document.hidden);},1000);\n"
+            + "try{var onm=window.newMsgNotice;if(typeof onm==='function'&&!onm.__f){var nw=function(list){var rv=onm.apply(this,arguments);try{var m=list[list.length-1],r=rmOf(m);if(sysOk()&&rsNtf(r)){var un=0;try{un=rsum[r].un||0;}catch(z){}var n=un>0?un:list.length;var tg='room-'+r;recent[tg]=Date.now();send(roomTitle(r),{body:(n>1?'['+n+'条] ':'')+(r===1?dispName(m.user)+'：':'')+msgTxt(m).slice(0,80),tag:tg});}}catch(x){}return rv;};nw.__f=1;window.newMsgNotice=nw;}}catch(e){}\n"
+            + "try{var oss=window.sysShow;if(typeof oss==='function'&&!oss.__s){var ns=function(t,b,tg){try{if(tg&&String(tg).indexOf('room-')===0&&recent[tg]&&Date.now()-recent[tg]<3000){return Promise.resolve();}}catch(x){}return oss.apply(this,arguments);};ns.__s=1;window.sysShow=ns;}}catch(e){}\n"
             + "window.__pipPrep=function(){try{var L=document.getElementById('vcL');if(!L)return;L.classList.remove('pip');if(L.classList.contains('mini')){if(window.vcMini)vcMini(false);else L.classList.remove('mini','bubble');}}catch(e){}};\n"
-            + "window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='vcall')return;var F=document.getElementById('vcF');if(!F||e.source!==F.contentWindow)return;lg('视频页消息 type='+d.type+(d.reason?' reason='+d.reason:''));if(d.type==='pip-fail'){e.stopImmediatePropagation();try{HostBridge.pip();}catch(x){}}},true);\n"
+            + "window.addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='vcall')return;var F=document.getElementById('vcF');if(!F||e.source!==F.contentWindow)return;if(d.type==='pip-fail'){e.stopImmediatePropagation();try{HostBridge.pip();}catch(x){}}},true);\n"
             + "var last=null;setInterval(function(){var on=false;try{on=!!(document.getElementById('vcF')&&vc&&vc.id&&vc.st==='act');}catch(x){}if(on!==last){last=on;try{HostBridge.call(on);}catch(x){}}},1000);\n"
             + "})();\n";
     private FrameLayout root;
@@ -139,11 +130,6 @@ public class MainActivity extends Activity {
 
     private volatile boolean inCall = false;
     private volatile boolean resumed = false;
-
-    // 日志（内存里最多 600 行；点界面上的"日志"小按钮查看 / 一键复制）
-    private static final List<String> LOGS = new ArrayList<String>();
-    private static final SimpleDateFormat LOG_FMT = new SimpleDateFormat("HH:mm:ss", Locale.US);
-    private TextView logBtn;
 
     // 等待用户授权的摄像头/麦克风请求
     private PermissionRequest pendingMedia;
@@ -170,7 +156,6 @@ public class MainActivity extends Activity {
         chatHost = hostOf(chatUrl);
 
         createChannels(); // 安卓 13 会在这时弹出"允许通知"
-        startKeepAlive();
         applyCallFlags(getIntent());
 
         root = new FrameLayout(this);
@@ -178,9 +163,6 @@ public class MainActivity extends Activity {
         root.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
-        addLogButton();
-        addLog("==== 软件启动 ====");
-        addLog(deviceInfo());
 
         setupWebView();
 
@@ -206,7 +188,6 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         resumed = true;
-        addLog("onResume 回到前台");
         cancelCallNotification(); // 回到软件，来电界面已在网页里，停掉通知铃声
     }
 
@@ -214,7 +195,6 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         resumed = false;
-        addLog("onPause 离开前台");
         if (Build.VERSION.SDK_INT >= 21) {
             android.webkit.CookieManager.getInstance().flush();
         }
@@ -246,7 +226,6 @@ public class MainActivity extends Activity {
     @Override
     public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        addLog("按Home/离开 inCall=" + inCall + " 全屏视频=" + (customView != null) + " 系统=" + Build.VERSION.SDK_INT);
         if (Build.VERSION.SDK_INT >= 26 && (customView != null || inCall)
                 && !isInPictureInPictureMode()) {
             enterPip();
@@ -256,8 +235,6 @@ public class MainActivity extends Activity {
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
-        addLog("画中画状态变化 进入=" + isInPictureInPictureMode);
-        if (logBtn != null) logBtn.setVisibility(isInPictureInPictureMode ? View.GONE : View.VISIBLE);
         if (isInPictureInPictureMode) {
             setImmersiveMode(true);
         } else if (customView == null) {
@@ -280,160 +257,67 @@ public class MainActivity extends Activity {
                     .setAspectRatio(ratio)
                     .build();
             enterPictureInPictureMode(params);
-            addLog("已请求进入画中画 比例=" + ratio);
         } catch (Exception e) {
-            addLog("进入画中画失败：" + e);
         }
     }
 
-    // ---------------------------------------------------------------- 后台保持
+    // ---------------------------------------------------------------- 通知设置入口
 
-    /** 启动前台服务（通知栏会有一条常驻小通知），防止系统在后台冻结整个软件 */
-    private void startKeepAlive() {
-        try {
-            Intent sv = new Intent(this, KeepAliveService.class);
-            if (Build.VERSION.SDK_INT >= 26) {
-                startForegroundService(sv);
-            } else {
-                startService(sv);
-            }
-            addLog("已请求启动后台保持服务");
-        } catch (Throwable e) {
-            addLog("启动后台保持服务失败：" + e);
-        }
-    }
-
-    /** 给服务等其他类写日志用 */
-    static void slog(String m) {
-        synchronized (LOGS) {
-            LOGS.add(LOG_FMT.format(new Date()) + " " + m);
-            while (LOGS.size() > 600) LOGS.remove(0);
-        }
-    }
-
-    // ---------------------------------------------------------------- 日志
-
-    private void addLog(String m) {
-        synchronized (LOGS) {
-            LOGS.add(LOG_FMT.format(new Date()) + " " + m);
-            while (LOGS.size() > 600) LOGS.remove(0);
-        }
-    }
-
-    private String allLogs() {
-        StringBuilder sb = new StringBuilder();
-        synchronized (LOGS) {
-            for (String l : LOGS) sb.append(l).append('\n');
-        }
-        return sb.toString();
-    }
-
-    private String deviceInfo() {
-        String wv = "";
-        try {
-            if (Build.VERSION.SDK_INT >= 26) {
-                android.content.pm.PackageInfo pi = WebView.getCurrentWebViewPackage();
-                if (pi != null) wv = " WebView=" + pi.versionName;
-            }
-        } catch (Throwable ignored) {
-        }
-        return "设备=" + Build.MANUFACTURER + " " + Build.MODEL + " 安卓=" + Build.VERSION.RELEASE
-                + "(API" + Build.VERSION.SDK_INT + ")" + wv;
-    }
-
-    private void addLogButton() {
-        logBtn = new TextView(this);
-        logBtn.setText("日志");
-        logBtn.setTextColor(0xFFFFFFFF);
-        logBtn.setTextSize(12);
-        logBtn.setGravity(Gravity.CENTER);
-        logBtn.setPadding(dp(10), dp(6), dp(10), dp(6));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0x99000000);
-        bg.setCornerRadius(dp(14));
-        logBtn.setBackgroundDrawable(bg);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.gravity = Gravity.BOTTOM | Gravity.LEFT;
-        lp.leftMargin = dp(6);
-        lp.bottomMargin = dp(90);
-        root.addView(logBtn, lp);
-        final float[] st = new float[4];
-        final boolean[] moved = new boolean[1];
-        logBtn.setOnTouchListener(new View.OnTouchListener() {
+    private TextView linkBtn(String text, final String chId) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextColor(0xFF2D7FF9);
+        b.setTextSize(15);
+        b.setPadding(0, dp(8), dp(20), dp(8));
+        b.setOnClickListener(new View.OnClickListener() {
             @Override
-            public boolean onTouch(View v, MotionEvent e) {
-                switch (e.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        st[0] = e.getRawX();
-                        st[1] = e.getRawY();
-                        st[2] = v.getTranslationX();
-                        st[3] = v.getTranslationY();
-                        moved[0] = false;
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        float dx = e.getRawX() - st[0], dy = e.getRawY() - st[1];
-                        if (Math.abs(dx) > dp(6) || Math.abs(dy) > dp(6)) moved[0] = true;
-                        if (moved[0]) {
-                            v.setTranslationX(st[2] + dx);
-                            v.setTranslationY(st[3] + dy);
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        if (!moved[0]) showLogs();
-                        return true;
-                }
-                return false;
+            public void onClick(View v) {
+                openChannelSettings(chId);
             }
         });
+        return b;
     }
 
-    private void showLogs() {
-        final String all = allLogs();
-        String shown = all;
-        if (shown.length() > 12000) shown = "…（只显示最后一部分，复制的是全部）\n" + shown.substring(shown.length() - 12000);
-        ScrollView sv = new ScrollView(this);
-        TextView tv = new TextView(this);
-        tv.setTextSize(11);
-        tv.setTypeface(Typeface.MONOSPACE);
-        tv.setPadding(dp(12), dp(8), dp(12), dp(8));
-        tv.setText(shown.length() == 0 ? "（还没有日志）" : shown);
-        sv.addView(tv);
+    /** 跳到系统里这个软件的某个通知类别设置页（声音、振动、横幅都在那里改） */
+    private void openChannelSettings(String chId) {
+        try {
+            Intent it;
+            if (Build.VERSION.SDK_INT >= 26) {
+                it = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+                it.putExtra(Settings.EXTRA_CHANNEL_ID, chId);
+                it.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            } else {
+                it = new Intent("android.settings.APP_NOTIFICATION_SETTINGS");
+                it.putExtra("app_package", getPackageName());
+                it.putExtra("app_uid", getApplicationInfo().uid);
+            }
+            startActivity(it);
+        } catch (Throwable e) {
+            try {
+                Intent it = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                it.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(it);
+            } catch (Throwable e2) {
+                toast("打不开系统设置，请手动去 设置→应用→通知");
+            }
+        }
+    }
+
+    /** 首次进入聊天页时提醒一次：部分手机默认不给新软件开横幅、声音、振动 */
+    private void maybeGuideNotify() {
+        if (prefs.getBoolean("ntf_guided", false) || isFinishing()) return;
+        prefs.edit().putBoolean("ntf_guided", true).apply();
         new AlertDialog.Builder(this)
-                .setTitle("日志（" + LOGS.size() + " 行）")
-                .setView(sv)
-                .setPositiveButton("复制全部", new DialogInterface.OnClickListener() {
+                .setTitle("开启消息提醒")
+                .setMessage("部分手机默认不给新软件开启横幅、声音和振动。请在接下来的页面里把「横幅」「声音」「振动」打开，有新消息时才会像微信一样提醒你。以后也可以在设置里再次进入。")
+                .setPositiveButton("去设置", new DialogInterface.OnClickListener() {
                     @Override
-                    public void onClick(DialogInterface d, int w) {
-                        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                        if (cm != null) {
-                            cm.setPrimaryClip(ClipData.newPlainText("log", all));
-                            toast("日志已复制，可以去粘贴了");
-                        }
+                    public void onClick(DialogInterface dialog, int which) {
+                        openChannelSettings(CH_MSG);
                     }
                 })
-                .setNeutralButton("清空", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface d, int w) {
-                        synchronized (LOGS) {
-                            LOGS.clear();
-                        }
-                    }
-                })
-                .setNegativeButton("测试通知", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface d, int w) {
-                        addLog("【手动测试】发一条测试通知");
-                        showSysNotification("测试通知", "能看到横幅、听到声音就正常", "test-" + System.currentTimeMillis());
-                    }
-                })
+                .setNegativeButton("以后再说", null)
                 .show();
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
-        addLog("onStop 软件已不可见");
     }
 
     // ---------------------------------------------------------------- 系统通知
@@ -475,74 +359,32 @@ public class MainActivity extends Activity {
         nm.createNotificationChannel(call);
     }
 
-    /** 把声音相关的系统状态写进日志，方便判断为什么没响 */
-    private void logSoundState(String chId) {
-        try {
-            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            android.media.AudioManager am = (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            StringBuilder sb = new StringBuilder("声音状态：");
-            if (am != null) {
-                sb.append("铃声模式=").append(am.getRingerMode()).append("(0静音 1振动 2正常) ")
-                        .append("通知音量=").append(am.getStreamVolume(android.media.AudioManager.STREAM_NOTIFICATION))
-                        .append("/").append(am.getStreamMaxVolume(android.media.AudioManager.STREAM_NOTIFICATION)).append(" ");
-            }
-            if (nm != null && Build.VERSION.SDK_INT >= 23) {
-                sb.append("勿扰=").append(nm.getCurrentInterruptionFilter()).append("(1关闭 2仅重要 3全静音 4仅闹钟) ");
-            }
-            if (nm != null && Build.VERSION.SDK_INT >= 26) {
-                NotificationChannel ch = nm.getNotificationChannel(chId);
-                if (ch == null) {
-                    sb.append("渠道不存在");
-                } else {
-                    sb.append("渠道[").append(chId).append("] 重要性=").append(ch.getImportance())
-                            .append(" 声音=").append(ch.getSound())
-                            .append(" 振动=").append(ch.shouldVibrate())
-                            .append(" 锁屏=").append(ch.getLockscreenVisibility());
-                }
-            }
-            addLog(sb.toString());
-        } catch (Throwable e) {
-            addLog("读取声音状态失败：" + e);
-        }
-    }
-
     private void showSysNotification(String title, String body, String tag) {
-        addLog("软件收到通知请求 标题=" + title + " 内容=" + body + " tag=" + tag
-                + " 软件在前台=" + resumed);
         if (resumed && "vcall".equals(tag)) {
-            addLog("→ 不弹：来电时软件在前台，网页里已有来电界面");
             return;
         }
 
         try {
             boolean on = NotificationManagerCompat.from(this).areNotificationsEnabled();
-            addLog("系统通知总开关=" + on);
             if (!on) {
-                addLog("→ 不弹：系统里这个软件的通知被关了（设置→应用→通知）");
                 return;
             }
             doShowNotification(title, body, tag);
         } catch (Throwable e) {
-            addLog("→ 发通知出错：" + e);
         }
     }
 
     private void doShowNotification(String title, String body, String tag) {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) {
-            addLog("→ 拿不到 NotificationManager");
             return;
         }
         createChannels();
         boolean isCall = "vcall".equals(tag);
         String chId = isCall ? CH_CALL : CH_MSG;
-        logSoundState(chId);
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel ch = nm.getNotificationChannel(chId);
-            addLog("渠道 " + chId + " 重要性=" + (ch == null ? "不存在" : String.valueOf(ch.getImportance()))
-                    + "（0=已关闭 3=默认 4=高）");
             if (ch != null && ch.getImportance() == NotificationManager.IMPORTANCE_NONE) {
-                addLog("→ 不弹：这个通知类别被你关了（设置→应用→通知→类别）");
                 return;
             }
         }
@@ -589,14 +431,6 @@ public class MainActivity extends Activity {
         }
         nm.cancel(id); // 先取消同一聊天室的旧通知，让新消息重新弹横幅、响铃
         nm.notify(id, n);
-        String act = "";
-        if (Build.VERSION.SDK_INT >= 23) {
-            try {
-                act = " 通知栏里现有 " + nm.getActiveNotifications().length + " 条";
-            } catch (Throwable ignored) {
-            }
-        }
-        addLog("→ 已调用系统发通知 id=" + id + act);
     }
 
     private void cancelCallNotification() {
@@ -627,9 +461,6 @@ public class MainActivity extends Activity {
         }
 
         webView.addJavascriptInterface(new HostBridge(), "HostBridge");
-        if (Build.VERSION.SDK_INT >= 26) {
-            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false); // 进后台后网页不被降级
-        }
 
         webView.setDownloadListener(new DownloadListener() {
             @Override
@@ -745,6 +576,15 @@ public class MainActivity extends Activity {
         e2.setText(videoHost);
         box.addView(e2);
 
+        TextView t3 = new TextView(this);
+        t3.setText("\n通知提醒（声音、振动、横幅在系统设置页里改）");
+        box.addView(t3);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(linkBtn("消息通知设置", CH_MSG));
+        row.addView(linkBtn("来电设置", CH_CALL));
+        box.addView(row);
+
         final AlertDialog d = new AlertDialog.Builder(this)
                 .setTitle("设置")
                 .setView(box)
@@ -801,7 +641,6 @@ public class MainActivity extends Activity {
     }
 
     private void showError(String failingUrl, String desc) {
-        addLog("页面打不开 " + failingUrl + " " + desc);
         String btn = "display:inline-block;margin:8px;padding:10px 22px;border-radius:8px;"
                 + "background:#2d7ff9;color:#fff;text-decoration:none;font-size:16px";
         String html = "<html><head><meta charset='utf-8'>"
@@ -861,7 +700,6 @@ public class MainActivity extends Activity {
             super.onPageStarted(view, url, favicon);
             webView.setKeepScreenOn(false);
             inCall = false;
-            addLog("页面开始加载 " + url);
         }
 
         @Override
@@ -869,7 +707,7 @@ public class MainActivity extends Activity {
             super.onPageFinished(view, url);
             runJs(HOOK_JS);
             runJs(NOTIFY_JS);
-            addLog("页面加载完成，已注入脚本 " + url);
+            if (hostAllowed(hostOf(url))) maybeGuideNotify();
         }
 
         @TargetApi(23)
@@ -897,7 +735,6 @@ public class MainActivity extends Activity {
         @Override
         public void onPermissionRequest(final PermissionRequest request) {
             String host = request.getOrigin() == null ? "" : request.getOrigin().getHost();
-            addLog("网页请求权限 host=" + host + " " + java.util.Arrays.toString(request.getResources()));
             if (!hostAllowed(host)) {
                 request.deny();
                 return;
@@ -1143,13 +980,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void call(boolean on) {
             inCall = on;
-            addLog("通话状态变化 inCall=" + on);
         }
 
         // 网页的通知转成系统通知；tag 为 vcall 时是来电，用来电铃声
         @JavascriptInterface
         public void notify(final String title, final String body, final String tag) {
-            addLog("桥接收到 notify tag=" + tag);
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -1162,7 +997,6 @@ public class MainActivity extends Activity {
         // 视频页自己的画中画按钮（网页的画中画在 WebView 里不能用）→ 改用软件的画中画
         @JavascriptInterface
         public void pip() {
-            addLog("桥接收到 pip（视频页的画中画按钮）");
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -1173,11 +1007,6 @@ public class MainActivity extends Activity {
                     }
                 }
             });
-        }
-
-        @JavascriptInterface
-        public void log(String m) {
-            addLog(m);
         }
 
         @JavascriptInterface
