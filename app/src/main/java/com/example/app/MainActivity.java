@@ -86,8 +86,6 @@ public class MainActivity extends Activity {
     // 下载时网页把文件转成 base64 文本传给软件，限制大小防止内存溢出（约 50MB 文件）
     private static final int MAX_DATA_CHARS = 70 * 1024 * 1024;
 
-    // 视频域名默认值（用户不填写时使用）
-    private static final String DEFAULT_VIDEO_HOST = "";
 
     // 记录 <a download="文件名"> 的文件名，下载时用
     private static final String HOOK_JS =
@@ -113,6 +111,7 @@ public class MainActivity extends Activity {
             + "var last=null;setInterval(function(){var on=false;try{on=!!(document.getElementById('vcF')&&vc&&vc.id&&vc.st==='act');}catch(x){}if(on!==last){last=on;try{HostBridge.call(on);}catch(x){}}},1000);\n"
             + "try{var oa=window.api;if(typeof oa==='function'&&!oa.__a){var na=function(p){try{var q=String(p);if(q.indexOf('/api/sync')===0){var mm=/after=(\\d+)/.exec(q);if(mm)HostBridge.seq(mm[1]);}}catch(x){}return oa.apply(this,arguments);};na.__a=1;window.api=na;}}catch(e){}\n"
             + "var lsA='',lsC='';setInterval(function(){try{var a=String(name)+'|'+String(token)+'|'+String(grant)+'|'+String(lgrant);if(a!==lsA){lsA=a;HostBridge.auth(String(name||''),String(token||''),String(grant||''),String(lgrant||''));}var c={on:!!sysOk(),rooms:{},nicks:{}};try{for(var i=0;i<rooms.length;i++){var rr=rooms[i];c.rooms[rr.id]={t:roomTitle(rr.id),n:rsNtf(rr.id)?1:0};}}catch(e1){}try{for(var u in prof){if(prof[u]&&prof[u].nick)c.nicks[u]=prof[u].nick;}}catch(e2){}var cs=JSON.stringify(c);if(cs!==lsC){lsC=cs;HostBridge.cfg(cs);}}catch(e){}},2000);\n"
+            + "try{var ovf=window.vcFrame;if(typeof ovf==='function'&&!ovf.__v){var nvf=function(url){try{if(url){var u=new URL(url,location.href);if(window.__vurl){try{var o=new URL(window.__vurl);u.protocol=o.protocol;u.host=o.host;var au=o.searchParams.get('auth');if(au)u.searchParams.set('auth',au);}catch(x1){}}url=u.toString();var org=u.origin;try{if(vcFreeOn)vcFreeO=org;else if(vc&&vc.id)vc.origin=org;}catch(x2){}try{HostBridge.video(url);}catch(x3){}}}catch(x){}return ovf.call(this,url);};nvf.__v=1;window.vcFrame=nvf;}}catch(e){}\n"
             + "})();\n";
     private FrameLayout root;
     private WebView webView;
@@ -121,7 +120,10 @@ public class MainActivity extends Activity {
 
     private String chatUrl = "";
     private String chatHost = "";
-    private String videoHost = "";
+    // 视频页网址：软件里填了就用它；没填就用聊天脚本里设置的默认网址
+    private String videoUrl = "";
+    // 摄像头 / 麦克风放行的视频页域名：由聊天页真正打开的视频网址自动得出，不用手动填
+    private volatile String videoHost = "";
 
     private AlertDialog settingsDialog;
 
@@ -151,7 +153,7 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
         chatUrl = prefs.getString("chat_url", "");
-        videoHost = prefs.getString("video_host", DEFAULT_VIDEO_HOST);
+        videoUrl = prefs.getString("video_url", "");
         chatHost = hostOf(chatUrl);
 
         Notifier.init(this); // 安卓 13 会在这时弹出"允许通知"
@@ -271,6 +273,48 @@ public class MainActivity extends Activity {
                     .build();
             enterPictureInPictureMode(params);
         } catch (Exception e) {
+        }
+    }
+
+    // ---------------------------------------------------------------- 通知设置入口
+
+    private TextView linkBtn(String text, final String chId) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextColor(0xFF2D7FF9);
+        b.setTextSize(15);
+        b.setPadding(0, dp(8), dp(20), dp(8));
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                openChannelSettings(chId);
+            }
+        });
+        return b;
+    }
+
+    /** 跳到系统里这个软件的某个通知类别设置页（声音、振动、横幅都在那里改） */
+    private void openChannelSettings(String chId) {
+        try {
+            Intent it;
+            if (Build.VERSION.SDK_INT >= 26) {
+                it = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+                it.putExtra(Settings.EXTRA_CHANNEL_ID, chId);
+                it.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            } else {
+                it = new Intent("android.settings.APP_NOTIFICATION_SETTINGS");
+                it.putExtra("app_package", getPackageName());
+                it.putExtra("app_uid", getApplicationInfo().uid);
+            }
+            startActivity(it);
+        } catch (Throwable e) {
+            try {
+                Intent it = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                it.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(it);
+            } catch (Throwable e2) {
+                toast("打不开系统设置，请手动去 设置→应用→通知");
+            }
         }
     }
 
@@ -436,14 +480,28 @@ public class MainActivity extends Activity {
         box.addView(e1);
 
         TextView t2 = new TextView(this);
-        t2.setText("\n视频页域名或网址（不填则使用默认，视频和聊天不在同一个域名时建议填写）");
+        t2.setText("\n视频页网址（可留空）\n填写后，视频使用这里的网址；留空则使用聊天脚本里设置的默认网址。");
         box.addView(t2);
         final EditText e2 = new EditText(this);
-        e2.setHint("video.example.com（可留空）");
+        e2.setHint("https://video.example.com（可留空）");
         e2.setSingleLine(true);
         e2.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        e2.setText(videoHost);
+        e2.setText(videoUrl);
         box.addView(e2);
+
+        final CheckBox cbPoster = new CheckBox(this);
+        cbPoster.setText("视频未接通时显示播放图标（默认关闭：显示纯黑）");
+        cbPoster.setChecked(prefs.getBoolean("show_poster", false));
+        box.addView(cbPoster);
+
+        TextView t3 = new TextView(this);
+        t3.setText("\n通知提醒（声音、振动、横幅在系统设置页里改）");
+        box.addView(t3);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(linkBtn("消息通知设置", Notifier.CH_MSG));
+        row.addView(linkBtn("来电设置", Notifier.CH_CALL));
+        box.addView(row);
 
         final CheckBox cbBg = new CheckBox(this);
         cbBg.setText("后台消息提醒（通知栏会常驻一条小通知）");
@@ -470,15 +528,12 @@ public class MainActivity extends Activity {
                             toast("请输入正确的聊天网址");
                             return;
                         }
-                        // 有输入就用输入的，没输入就用默认值
-                        String vh = hostOf(normalizeUrl(e2.getText()));
-                        if (vh.length() == 0) {
-                            vh = DEFAULT_VIDEO_HOST;
-                        }
+                        // 视频网址：填了就用填的；留空 = 使用聊天脚本里的默认网址
+                        videoUrl = normalizeUrl(e2.getText());
                         chatUrl = u;
                         chatHost = hostOf(u);
-                        videoHost = vh;
-                        prefs.edit().putString("chat_url", chatUrl).putString("video_host", videoHost)
+                        prefs.edit().putString("chat_url", chatUrl).putString("video_url", videoUrl)
+                                .putBoolean("show_poster", cbPoster.isChecked())
                                 .putBoolean("bg_on", cbBg.isChecked()).apply();
                         applyBg();
                         d.dismiss();
@@ -573,6 +628,7 @@ public class MainActivity extends Activity {
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
             runJs(HOOK_JS);
+            runJs("window.__vurl=" + JSONObject.quote(videoUrl) + ";");
             runJs(NOTIFY_JS);
         }
 
@@ -596,6 +652,13 @@ public class MainActivity extends Activity {
     // ---------------------------------------------------------------- WebChromeClient
 
     private class AppChrome extends WebChromeClient {
+
+        // 视频还没画面时，WebView 默认会画一个播放图标；默认改成透明（显示页面自己的纯黑背景）
+        @Override
+        public Bitmap getDefaultVideoPoster() {
+            if (prefs.getBoolean("show_poster", false)) return super.getDefaultVideoPoster();
+            return Bitmap.createBitmap(50, 50, Bitmap.Config.ARGB_8888);
+        }
 
         @TargetApi(21)
         @Override
@@ -904,6 +967,18 @@ public class MainActivity extends Activity {
             }
             SharedPreferences sp = getSharedPreferences("bg_state", MODE_PRIVATE);
             if (sq > sp.getLong("seq", 0)) sp.edit().putLong("seq", sq).apply();
+        }
+
+        // 聊天页要打开的视频网址：记下它的域名，用来放行摄像头 / 麦克风（只认聊天页自己设置的那个）
+        @JavascriptInterface
+        public void video(String url) {
+            try {
+                Uri u = Uri.parse(url);
+                String sc = u.getScheme() == null ? "" : u.getScheme().toLowerCase(Locale.ROOT);
+                String h = hostOf(url);
+                if ((sc.equals("https") || sc.equals("http")) && h.length() > 0) videoHost = h;
+            } catch (Exception ignored) {
+            }
         }
 
         // 视频页自己的画中画按钮（网页的画中画在 WebView 里不能用）→ 改用软件的画中画
