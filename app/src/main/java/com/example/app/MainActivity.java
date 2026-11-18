@@ -79,6 +79,10 @@ public class MainActivity extends Activity {
 
     private static final String ACTION_SETTINGS = "com.example.app.SETTINGS";
 
+    // 内置的聊天网址：没在软件里设置过时就用它，首次打开不再强制弹窗要求输入。
+    // 换成你自己的聊天网址（带 https://）；设为 "" 则恢复"首次必须输入"。
+    private static final String DEFAULT_CHAT_URL = "https://p.gth.dpdns.org/";
+
     private static final int REQ_MEDIA = 1;
     private static final int REQ_STORAGE = 2;
     private static final int REQ_FILE = 3;
@@ -155,6 +159,7 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
         chatUrl = prefs.getString("chat_url", "");
+        if (chatUrl.length() == 0) chatUrl = normalizeUrl(DEFAULT_CHAT_URL);
         videoUrl = prefs.getString("video_url", "");
         chatHost = hostOf(chatUrl);
 
@@ -471,7 +476,7 @@ public class MainActivity extends Activity {
         box.setPadding(p, dp(8), p, 0);
 
         TextView t1 = new TextView(this);
-        t1.setText("聊天网址（必填）");
+        t1.setText("聊天网址（留空则使用内置地址）");
         box.addView(t1);
         final EditText e1 = new EditText(this);
         e1.setHint("https://chat.example.com");
@@ -525,6 +530,7 @@ public class MainActivity extends Activity {
                     @Override
                     public void onClick(View v) {
                         String u = normalizeUrl(e1.getText());
+                        if (u.length() == 0) u = normalizeUrl(DEFAULT_CHAT_URL);
                         if (u.length() == 0) {
                             toast("请输入正确的聊天网址");
                             return;
