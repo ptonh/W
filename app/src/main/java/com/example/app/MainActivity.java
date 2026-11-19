@@ -138,6 +138,166 @@ public class MainActivity extends Activity {
     /** 软件是否在前台可见（后台查询服务据此决定要不要查） */
     static volatile boolean visible = false;
 
+    // ===== 诊断日志（内部类）：粘贴在 "static volatile boolean visible = false;" 这一行之后 =====
+    static class AppLog {
+        private static final int MAX_BYTES = 60000;
+        private static java.io.File file;
+        private static Context app;
+        private static Thread th;
+        private static long lastPageAt = 0, bgAt = 0, lastTickAt = 0, lastPolled = -1;
+        private static String lastState = "";
+        private static boolean lastIdle = false, frozenLogged = false;
+
+        static synchronized void start(Context c) {
+            if (th != null) return;
+            app = c.getApplicationContext();
+            try {
+                file = new java.io.File(app.getFilesDir(), "applog.txt");
+                if (file.exists() && file.length() > MAX_BYTES) {
+                    String s = read();
+                    s = s.substring(s.length() / 2);
+                    int nl = s.indexOf('\n');
+                    if (nl >= 0) s = s.substring(nl + 1);
+                    write(s, false);
+                }
+            } catch (Throwable ignored) {
+            }
+            String extra = "";
+            try {
+                if (Build.VERSION.SDK_INT >= 23) {
+                    android.os.PowerManager pm = (android.os.PowerManager) app.getSystemService(Context.POWER_SERVICE);
+                    extra = " 省电白名单=" + (pm.isIgnoringBatteryOptimizations(app.getPackageName()) ? "是" : "否");
+                }
+            } catch (Throwable ignored) {
+            }
+            add("==== 进程启动 安卓" + Build.VERSION.RELEASE + extra + " ====");
+            th = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    while (true) {
+                        try {
+                            tick();
+                        } catch (Throwable ignored) {
+                        }
+                        try {
+                            Thread.sleep(8000);
+                        } catch (InterruptedException e) {
+                            break;
+                        }
+                    }
+                }
+            });
+            th.setDaemon(true);
+            th.start();
+        }
+
+        static synchronized void add(String msg) {
+            try {
+                write(new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                        .format(new java.util.Date()) + " " + msg + "\n", true);
+            } catch (Throwable ignored) {
+            }
+        }
+
+        private static void write(String s, boolean append) throws Exception {
+            if (file == null) return;
+            java.io.FileOutputStream o = new java.io.FileOutputStream(file, append);
+            o.write(s.getBytes("UTF-8"));
+            o.close();
+        }
+
+        private static String read() throws Exception {
+            if (file == null || !file.exists()) return "";
+            java.io.FileInputStream in = new java.io.FileInputStream(file);
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
+            in.close();
+            return b.toString("UTF-8");
+        }
+
+        static synchronized String text() {
+            try {
+                String s = read();
+                return s.length() == 0 ? "（暂无日志）" : s;
+            } catch (Throwable e) {
+                return "（读取日志失败）";
+            }
+        }
+
+        static synchronized void clear() {
+            try {
+                write("", false);
+            } catch (Throwable ignored) {
+            }
+        }
+
+        private static String t(long ms) {
+            return ms <= 0 ? "无" : new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date(ms));
+        }
+
+        static void fg(boolean vis) {
+            if (!vis) bgAt = System.currentTimeMillis();
+            frozenLogged = false;
+            add(vis ? "软件回到前台（网页最后一次同步 " + t(lastPageAt) + "）" : "软件进入后台");
+        }
+
+        static void page() {
+            long now = System.currentTimeMillis();
+            long gap = lastPageAt == 0 ? 0 : now - lastPageAt;
+            lastPageAt = now;
+            frozenLogged = false;
+            if (gap > 12000) add("网页恢复同步：中间停了 " + (gap / 1000) + " 秒");
+        }
+
+        private static void state(String key, String detail) {
+            if (key.equals(lastState)) return;
+            lastState = key;
+            add("状态 → " + detail);
+        }
+
+        private static void tick() {
+            if (app == null) return;
+            long now = System.currentTimeMillis();
+            if (lastTickAt > 0 && now - lastTickAt > 20000) {
+                add("进程被挂起：监视线程上一圈到这一圈隔了 " + ((now - lastTickAt) / 1000) + " 秒（正常约 8 秒）");
+            }
+            lastTickAt = now;
+            try {
+                if (Build.VERSION.SDK_INT >= 23) {
+                    android.os.PowerManager pm = (android.os.PowerManager) app.getSystemService(Context.POWER_SERVICE);
+                    boolean idle = pm.isDeviceIdleMode();
+                    if (idle != lastIdle) {
+                        lastIdle = idle;
+                        add(idle ? "进入深度休眠（Doze）" : "退出深度休眠（Doze）");
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+            if (visible) {
+                state("fg", "软件在前台，服务不查");
+            } else if (now - Notifier.pageSyncAt < 20000) {
+                state("alive", "后台，网页还在同步，服务不查");
+            } else {
+                state("poll", "后台，网页冻住，服务开始查询");
+                if (!frozenLogged) {
+                    frozenLogged = true;
+                    long live = (lastPageAt > bgAt && bgAt > 0) ? (lastPageAt - bgAt) / 1000 : 0;
+                    add("网页冻住：最后同步 " + t(lastPageAt) + "，退后台后又活了约 " + live + " 秒");
+                }
+            }
+            long p = app.getSharedPreferences("bg_state", Context.MODE_PRIVATE).getLong("polled", 0);
+            if (lastPolled < 0) {
+                lastPolled = p;
+            } else if (p > lastPolled) {
+                add("后台查询取到新消息，序号 " + lastPolled + " → " + p);
+                lastPolled = p;
+            }
+        }
+    }
+
     // 等待用户授权的摄像头/麦克风请求
     private PermissionRequest pendingMedia;
     private List<String> pendingMediaRes;
@@ -164,6 +324,7 @@ public class MainActivity extends Activity {
         chatHost = hostOf(chatUrl);
 
         Notifier.init(this); // 安卓 13 会在这时弹出"允许通知"
+        AppLog.start(this);
         applyBg();
         applyCallFlags(getIntent());
 
@@ -197,12 +358,14 @@ public class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         visible = true;
+        AppLog.fg(true);
     }
 
     @Override
     protected void onStop() {
         super.onStop();
         visible = false;
+        AppLog.fg(false);
     }
 
     @Override
@@ -513,6 +676,30 @@ public class MainActivity extends Activity {
         cbBg.setText("后台消息提醒（通知栏会常驻一条小通知）");
         cbBg.setChecked(prefs.getBoolean("bg_on", true));
         box.addView(cbBg);
+        LinearLayout rowLog = new LinearLayout(this);
+        rowLog.setOrientation(LinearLayout.HORIZONTAL);
+        android.widget.Button btCopy = new android.widget.Button(this);
+        btCopy.setText("复制日志");
+        btCopy.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(ClipData.newPlainText("log", AppLog.text()));
+                Toast.makeText(MainActivity.this, "日志已复制", Toast.LENGTH_SHORT).show();
+            }
+        });
+        rowLog.addView(btCopy);
+        android.widget.Button btClr = new android.widget.Button(this);
+        btClr.setText("清空日志");
+        btClr.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                AppLog.clear();
+                Toast.makeText(MainActivity.this, "已清空", Toast.LENGTH_SHORT).show();
+            }
+        });
+        rowLog.addView(btClr);
+        box.addView(rowLog);
 
         final AlertDialog d = new AlertDialog.Builder(this)
                 .setTitle("设置")
@@ -966,6 +1153,7 @@ public class MainActivity extends Activity {
         // 网页当前同步到的消息序号
         @JavascriptInterface
         public void seq(String v) {
+            AppLog.page();
             Notifier.pageSyncAt = System.currentTimeMillis(); // 网页还在同步，说明没被冻住
             long sq = 0;
             try {
